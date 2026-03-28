@@ -257,6 +257,9 @@ public class AbilityInstance {
             tag.put(TAG_CUSTOM_DATA, customData.copy());
         }
 
+        // Allow subclasses (e.g., TransformationInstance) to write their own data
+        writeAdditionalData(tag);
+
         return tag;
     }
 
@@ -298,8 +301,40 @@ public class AbilityInstance {
             instance.cooldownMax = type.getCooldownTicks();
         }
 
+        // Allow subclasses (e.g., TransformationInstance) to read their own data
+        instance.readAdditionalData(tag);
+
         return instance;
     }
+
+    // ═══════════════════════════════════════════════════════════════════
+    //  Subclass serialization hooks
+    // ═══════════════════════════════════════════════════════════════════
+
+    /**
+     * Called at the end of {@link #serializeNBT} to allow subclasses to write
+     * additional data to the NBT tag. Override this in subclasses that have
+     * extra per-instance state (e.g., {@code TransformationInstance} stores
+     * the current transformation phase).
+     *
+     * <p>The base implementation does nothing. Subclasses should call
+     * {@code super.writeAdditionalData(tag)} for future-proofing.</p>
+     *
+     * @param tag the NBT tag being written to (already contains base fields)
+     */
+    protected void writeAdditionalData(CompoundTag tag) {}
+
+    /**
+     * Called at the end of {@link #deserializeNBT} to allow subclasses to read
+     * additional data from the NBT tag. Override this in subclasses that have
+     * extra per-instance state.
+     *
+     * <p>The base implementation does nothing. Subclasses should call
+     * {@code super.readAdditionalData(tag)} for future-proofing.</p>
+     *
+     * @param tag the NBT tag being read from (base fields already loaded)
+     */
+    protected void readAdditionalData(CompoundTag tag) {}
 
     /**
      * Functional interface for resolving ability IDs to types during deserialization.

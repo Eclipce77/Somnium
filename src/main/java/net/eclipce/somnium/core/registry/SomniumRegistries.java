@@ -5,11 +5,16 @@ import net.eclipce.somnium.core.ability.AbilityInstance;
 import net.eclipce.somnium.core.ability.AbilityType;
 import net.eclipce.somnium.core.power.Power;
 import net.minecraft.resources.ResourceLocation;
+import net.minecraft.tags.TagKey;
 import net.minecraftforge.registries.DeferredRegister;
 import net.minecraftforge.registries.IForgeRegistry;
+import net.minecraftforge.registries.NewRegistryEvent;
 import net.minecraftforge.registries.RegistryBuilder;
+import net.minecraftforge.registries.tags.ITag;
 
 import javax.annotation.Nullable;
+import java.util.Collection;
+import java.util.Collections;
 import java.util.function.Supplier;
 
 /**
@@ -22,11 +27,9 @@ import java.util.function.Supplier;
  * (items, blocks, etc.) — each entry gets a unique {@link ResourceLocation}
  * name, and the registry maps names to singleton objects.</p>
  *
- * <p>Somnium itself creates the registries via {@link DeferredRegister} and
- * calls {@link DeferredRegister#makeRegistry(Supplier)} to build them during the
- * {@code NewRegistryEvent}. Addon mods then create their own
- * {@code DeferredRegister} instances pointing to the same registry names
- * to register their own abilities and powers.</p>
+ * <p>The registries are created via {@link NewRegistryEvent} during mod loading.
+ * Addon mods create their own {@code DeferredRegister} instances pointing to
+ * the same registry names to register their own abilities and powers.</p>
  *
  * <h3>Usage for addon developers</h3>
  * <p>In your mod's init class:</p>
@@ -92,14 +95,13 @@ public final class SomniumRegistries {
             new ResourceLocation(Somnium.MOD_ID, "powers");
 
     // ═══════════════════════════════════════════════════════════════════
-    //  DeferredRegisters — these create the actual IForgeRegistry
-    //  instances during NewRegistryEvent. Only Somnium calls makeRegistry;
-    //  addon mods create their own DeferredRegisters referencing the
-    //  same registry names.
+    //  DeferredRegisters — addon mods use these registry names to
+    //  create their own DeferredRegisters. Somnium's own DeferredRegisters
+    //  are used to register Somnium's built-in content (if any).
     // ═══════════════════════════════════════════════════════════════════
 
     /**
-     * Somnium's internal DeferredRegister for AbilityType. Creates the registry.
+     * Somnium's internal DeferredRegister for AbilityType.
      * <p><strong>Addon mods should NOT reference this.</strong> Create your own
      * {@code DeferredRegister} using {@link #ABILITY_TYPES_NAME}.</p>
      */
@@ -107,7 +109,7 @@ public final class SomniumRegistries {
             DeferredRegister.create(ABILITY_TYPES_NAME, Somnium.MOD_ID);
 
     /**
-     * Somnium's internal DeferredRegister for Power. Creates the registry.
+     * Somnium's internal DeferredRegister for Power.
      * <p><strong>Addon mods should NOT reference this.</strong> Create your own
      * {@code DeferredRegister} using {@link #POWERS_NAME}.</p>
      */
@@ -115,28 +117,81 @@ public final class SomniumRegistries {
             DeferredRegister.create(POWERS_NAME, Somnium.MOD_ID);
 
     // ═══════════════════════════════════════════════════════════════════
-    //  Registry suppliers — these become non-null after NewRegistryEvent
+    //  Registry suppliers — populated during NewRegistryEvent
     // ═══════════════════════════════════════════════════════════════════
 
     /**
-     * The Forge registry for ability types. Access via {@code .get()} after
-     * registries are initialized. Will return {@code null} if called too early
-     * (before {@code NewRegistryEvent}).
+     * Supplier for the ability type registry. Populated during
+     * {@link NewRegistryEvent}. Returns {@code null} before the event fires.
+     *
+     * <p>Tags are enabled on this registry, allowing abilities to be grouped
+     * into data-driven tags (e.g., conflict categories like
+     * {@code somnium:transformation}).</p>
      */
-    public static final Supplier<IForgeRegistry<AbilityType>> ABILITY_TYPE_REGISTRY =
-            ABILITY_TYPES.makeRegistry(() -> new RegistryBuilder<AbilityType>()
-                    // Sync registry IDs to clients for networking
-                    // This ensures ability IDs are consistent across client/server
-            );
+    private static Supplier<IForgeRegistry<AbilityType>> abilityTypeRegistrySupplier;
 
     /**
-     * The Forge registry for powers. Access via {@code .get()} after
-     * registries are initialized.
+     * Supplier for the power registry. Populated during
+     * {@link NewRegistryEvent}. Returns {@code null} before the event fires.
      */
-    public static final Supplier<IForgeRegistry<Power>> POWER_REGISTRY =
-            POWERS.makeRegistry(() -> new RegistryBuilder<Power>()
-                    // Sync registry IDs to clients for networking
-            );
+    private static Supplier<IForgeRegistry<Power>> powerRegistrySupplier;
+
+    // ═══════════════════════════════════════════════════════════════════
+    //  Registry creation — called from Somnium main class
+    // ═══════════════════════════════════════════════════════════════════
+
+    /**
+     * Creates the custom registries during {@link NewRegistryEvent}.
+     * Called from the Somnium main class event handler.
+     *
+     * <p>This uses {@code NewRegistryEvent#create} with a {@link RegistryBuilder}
+     * to create the actual {@link IForgeRegistry} instances. The returned
+     * suppliers become valid after the event finishes processing.</p>
+     *
+     * @param event the new registry event
+     */
+    public static void onNewRegistry(NewRegistryEvent event) {
+        // Create the ability type registry with tag support
+        abilityTypeRegistrySupplier = event.create(
+                new RegistryBuilder<AbilityType>()
+                        .setName(ABILITY_TYPES_NAME)
+                        .hasTags()
+        );
+
+        // Create the power registry
+        powerRegistrySupplier = event.create(
+                new RegistryBuilder<Power>()
+                        .setName(POWERS_NAME)
+        );
+
+        Somnium.LOGGER.debug("Somnium registries created");
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    //  Registry access
+    // ═══════════════════════════════════════════════════════════════════
+
+    /**
+     * Gets the ability type registry.
+     *
+     * @return the registry, or {@code null} if called before
+     *         {@link NewRegistryEvent} has finished
+     */
+    @Nullable
+    public static IForgeRegistry<AbilityType> getAbilityTypeRegistry() {
+        return abilityTypeRegistrySupplier != null ? abilityTypeRegistrySupplier.get() : null;
+    }
+
+    /**
+     * Gets the power registry.
+     *
+     * @return the registry, or {@code null} if called before
+     *         {@link NewRegistryEvent} has finished
+     */
+    @Nullable
+    public static IForgeRegistry<Power> getPowerRegistry() {
+        return powerRegistrySupplier != null ? powerRegistrySupplier.get() : null;
+    }
 
     // ═══════════════════════════════════════════════════════════════════
     //  Utility methods — name/value lookups
@@ -151,7 +206,7 @@ public final class SomniumRegistries {
      */
     @Nullable
     public static ResourceLocation getAbilityKey(AbilityType abilityType) {
-        IForgeRegistry<AbilityType> registry = ABILITY_TYPE_REGISTRY.get();
+        IForgeRegistry<AbilityType> registry = getAbilityTypeRegistry();
         if (registry == null) return null;
         return registry.getKey(abilityType);
     }
@@ -164,7 +219,7 @@ public final class SomniumRegistries {
      */
     @Nullable
     public static AbilityType getAbilityValue(ResourceLocation key) {
-        IForgeRegistry<AbilityType> registry = ABILITY_TYPE_REGISTRY.get();
+        IForgeRegistry<AbilityType> registry = getAbilityTypeRegistry();
         if (registry == null) return null;
         return registry.getValue(key);
     }
@@ -177,7 +232,7 @@ public final class SomniumRegistries {
      */
     @Nullable
     public static ResourceLocation getPowerKey(Power power) {
-        IForgeRegistry<Power> registry = POWER_REGISTRY.get();
+        IForgeRegistry<Power> registry = getPowerRegistry();
         if (registry == null) return null;
         return registry.getKey(power);
     }
@@ -190,7 +245,7 @@ public final class SomniumRegistries {
      */
     @Nullable
     public static Power getPowerValue(ResourceLocation key) {
-        IForgeRegistry<Power> registry = POWER_REGISTRY.get();
+        IForgeRegistry<Power> registry = getPowerRegistry();
         if (registry == null) return null;
         return registry.getValue(key);
     }
@@ -202,7 +257,7 @@ public final class SomniumRegistries {
      * @return {@code true} if an ability with this name exists
      */
     public static boolean isAbilityRegistered(ResourceLocation key) {
-        IForgeRegistry<AbilityType> registry = ABILITY_TYPE_REGISTRY.get();
+        IForgeRegistry<AbilityType> registry = getAbilityTypeRegistry();
         return registry != null && registry.containsKey(key);
     }
 
@@ -213,7 +268,7 @@ public final class SomniumRegistries {
      * @return {@code true} if a power with this name exists
      */
     public static boolean isPowerRegistered(ResourceLocation key) {
-        IForgeRegistry<Power> registry = POWER_REGISTRY.get();
+        IForgeRegistry<Power> registry = getPowerRegistry();
         return registry != null && registry.containsKey(key);
     }
 
@@ -277,6 +332,76 @@ public final class SomniumRegistries {
      */
     public static AbilityInstance.AbilityTypeLookup abilityLookup() {
         return SomniumRegistries::getAbilityValue;
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    //  Tag query utilities
+    // ═══════════════════════════════════════════════════════════════════
+
+    /**
+     * Checks if an ability type belongs to a given tag.
+     *
+     * <p>Tags are loaded from datapack JSON files at:
+     * {@code data/<namespace>/tags/somnium/ability_types/<tagpath>.json}</p>
+     *
+     * @param abilityType the ability to check
+     * @param tagKey      the tag to check against
+     * @return {@code true} if the ability is in the tag, {@code false} if not
+     *         or if the tag system is not yet initialized
+     */
+    public static boolean isAbilityInTag(AbilityType abilityType, TagKey<AbilityType> tagKey) {
+        IForgeRegistry<AbilityType> registry = getAbilityTypeRegistry();
+        if (registry == null || registry.tags() == null) return false;
+        ITag<AbilityType> tag = registry.tags().getTag(tagKey);
+        return tag.contains(abilityType);
+    }
+
+    /**
+     * Gets all abilities that belong to a given tag.
+     *
+     * @param tagKey the tag to query
+     * @return a collection of ability types in the tag, or empty if the tag
+     *         doesn't exist or the system isn't initialized
+     */
+    public static Collection<AbilityType> getAbilitiesInTag(TagKey<AbilityType> tagKey) {
+        IForgeRegistry<AbilityType> registry = getAbilityTypeRegistry();
+        if (registry == null || registry.tags() == null) return Collections.emptyList();
+        ITag<AbilityType> tag = registry.tags().getTag(tagKey);
+        return tag.stream().toList();
+    }
+
+    /**
+     * Gets all tags that an ability type belongs to.
+     *
+     * @param abilityType the ability to query
+     * @return a stream of tag keys, or empty if not found
+     */
+    public static java.util.stream.Stream<TagKey<AbilityType>> getAbilityTags(AbilityType abilityType) {
+        IForgeRegistry<AbilityType> registry = getAbilityTypeRegistry();
+        if (registry == null || registry.tags() == null) {
+            return java.util.stream.Stream.empty();
+        }
+        return registry.tags().getReverseTag(abilityType)
+                .map(reverseTag -> reverseTag.getTagKeys())
+                .orElse(java.util.stream.Stream.empty());
+    }
+
+    /**
+     * Checks if two abilities share any tags, indicating a potential conflict.
+     *
+     * @param a the first ability
+     * @param b the second ability
+     * @return {@code true} if the abilities share at least one tag
+     */
+    public static boolean doAbilitiesConflict(AbilityType a, AbilityType b) {
+        IForgeRegistry<AbilityType> registry = getAbilityTypeRegistry();
+        if (registry == null || registry.tags() == null) return false;
+
+        var reverseTags = registry.tags().getReverseTag(a);
+        if (reverseTags.isEmpty()) return false;
+
+        return reverseTags.get().getTagKeys()
+                .anyMatch(tagKey -> isAbilityInTag(b, tagKey));
     }
 
     // Private constructor — this is a utility class

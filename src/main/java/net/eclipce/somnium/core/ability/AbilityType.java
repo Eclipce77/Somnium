@@ -313,9 +313,17 @@ public class AbilityType {
     }
 
     /**
-     * @return an unmodifiable set of conflict tags. Two abilities with overlapping
-     *         conflict tags may conflict — the API provides query utilities, but does
-     *         not block equipping by default. Addon devs can enforce exclusivity via events.
+     * Returns the intrinsic conflict tags declared at construction time via
+     * {@link Properties#conflictTag}. These are automatically converted to
+     * data-driven Forge tags by {@code SomniumAbilityTagsProvider} during datagen.
+     *
+     * <p><strong>For runtime conflict checking, use
+     * {@link net.eclipce.somnium.core.registry.SomniumRegistries#isAbilityInTag}
+     * or {@link net.eclipce.somnium.core.registry.SomniumRegistries#doAbilitiesConflict}
+     * </strong>, which query the full tag system (including datapack additions).
+     * This method only returns the code-declared tags, not tags added via JSON.</p>
+     *
+     * @return an unmodifiable set of intrinsic conflict tag IDs
      */
     public Set<ResourceLocation> getConflictTags() {
         return conflictTags;

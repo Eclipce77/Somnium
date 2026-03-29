@@ -1,10 +1,12 @@
 package net.eclipce.somnium;
 
 import com.mojang.logging.LogUtils;
+import net.eclipce.somnium.core.data.SomniumPlayerData;
 import net.eclipce.somnium.core.registry.SomniumRegistries;
 import net.minecraft.client.Minecraft;
 import net.minecraftforge.api.distmarker.Dist;
 import net.minecraftforge.common.MinecraftForge;
+import net.minecraftforge.common.capabilities.RegisterCapabilitiesEvent;
 import net.minecraftforge.event.BuildCreativeModeTabContentsEvent;
 import net.minecraftforge.event.server.ServerStartingEvent;
 import net.minecraftforge.eventbus.api.IEventBus;
@@ -21,7 +23,7 @@ public class Somnium {
     // Define mod id in a common place for everything to reference
     public static final String MOD_ID = "somnium";
     // Directly reference a slf4j logger
-    private static final Logger LOGGER = LogUtils.getLogger();
+    public static final Logger LOGGER = LogUtils.getLogger();
 
     public Somnium(FMLJavaModLoadingContext context)
     {
@@ -29,6 +31,10 @@ public class Somnium {
 
         SomniumRegistries.ABILITY_TYPES.register(modEventBus);
         SomniumRegistries.POWERS.register(modEventBus);
+        modEventBus.addListener(SomniumRegistries::onNewRegistry);
+        modEventBus.addListener(this::registerCapabilities);
+
+        LOGGER.info("Somnium API initialized");
 
         // Register the commonSetup method for modloading
         modEventBus.addListener(this::commonSetup);
@@ -39,6 +45,10 @@ public class Somnium {
         // Register the item to a creative tab
         modEventBus.addListener(this::addCreative);
 
+    }
+
+    private void registerCapabilities(RegisterCapabilitiesEvent event) {
+        event.register(SomniumPlayerData.class);
     }
 
     private void commonSetup(final FMLCommonSetupEvent event)

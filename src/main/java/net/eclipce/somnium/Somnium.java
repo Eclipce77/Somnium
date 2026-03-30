@@ -3,6 +3,7 @@ package net.eclipce.somnium;
 import com.mojang.logging.LogUtils;
 import net.eclipce.somnium.core.data.SomniumPlayerData;
 import net.eclipce.somnium.core.registry.SomniumRegistries;
+import net.eclipce.somnium.network.SomniumNetwork;
 import net.minecraft.client.Minecraft;
 import net.minecraftforge.api.distmarker.Dist;
 import net.minecraftforge.common.MinecraftForge;
@@ -33,6 +34,8 @@ public class Somnium {
         SomniumRegistries.POWERS.register(modEventBus);
         modEventBus.addListener(SomniumRegistries::onNewRegistry);
         modEventBus.addListener(this::registerCapabilities);
+
+        SomniumNetwork.init();
 
         LOGGER.info("Somnium API initialized");
 

@@ -1,6 +1,7 @@
 package net.eclipce.somnium;
 
 import com.mojang.logging.LogUtils;
+import net.eclipce.somnium.client.config.SomniumClientConfig;
 import net.eclipce.somnium.core.data.SomniumPlayerData;
 import net.eclipce.somnium.core.registry.SomniumRegistries;
 import net.eclipce.somnium.network.SomniumNetwork;
@@ -12,7 +13,9 @@ import net.minecraftforge.event.BuildCreativeModeTabContentsEvent;
 import net.minecraftforge.event.server.ServerStartingEvent;
 import net.minecraftforge.eventbus.api.IEventBus;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
+import net.minecraftforge.fml.ModLoadingContext;
 import net.minecraftforge.fml.common.Mod;
+import net.minecraftforge.fml.config.ModConfig;
 import net.minecraftforge.fml.event.lifecycle.FMLClientSetupEvent;
 import net.minecraftforge.fml.event.lifecycle.FMLCommonSetupEvent;
 import net.minecraftforge.fml.javafmlmod.FMLJavaModLoadingContext;
@@ -36,6 +39,8 @@ public class Somnium {
         modEventBus.addListener(this::registerCapabilities);
 
         SomniumNetwork.init();
+
+        ModLoadingContext.get().registerConfig(ModConfig.Type.CLIENT, SomniumClientConfig.SPEC);
 
         LOGGER.info("Somnium API initialized");
 

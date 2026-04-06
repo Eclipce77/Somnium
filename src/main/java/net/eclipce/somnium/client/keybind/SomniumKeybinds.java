@@ -85,7 +85,7 @@ public final class SomniumKeybinds {
     /** Keybind for transformation quick activation (WIP). Default: T */
     public static final KeyMapping TRANSFORMATION_QUICKBIND = new KeyMapping(
             "key." + Somnium.MOD_ID + ".transformation",
-            InputConstants.Type.KEYSYM, GLFW.GLFW_KEY_T, CATEGORY);
+            InputConstants.Type.KEYSYM, GLFW.GLFW_KEY_Y, CATEGORY);
 
     // ═══════════════════════════════════════════════════════════════════
     //  Utility methods

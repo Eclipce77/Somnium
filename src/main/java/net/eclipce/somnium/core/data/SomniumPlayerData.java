@@ -53,8 +53,11 @@ import java.util.*;
  */
 public class SomniumPlayerData {
 
-    /** Number of slots on the ability bar. */
+    /** Number of slots on each ability bar page. */
     public static final int BAR_SIZE = 6;
+
+    /** Maximum number of ability bar pages. */
+    public static final int MAX_PAGES = 3;
 
     // ═══════════════════════════════════════════════════════════════════
     //  NBT keys
@@ -70,6 +73,8 @@ public class SomniumPlayerData {
     private static final String TAG_PASSIVE_ID = "Id";
     private static final String TAG_PASSIVE_ENABLED = "Enabled";
     private static final String TAG_ACTIVE_TRANSFORMATION = "ActiveTransformation";
+    private static final String TAG_BAR_PAGE = "Page";
+    private static final String TAG_ACTIVE_PAGE = "ActivePage";
 
     // ═══════════════════════════════════════════════════════════════════
     //  Fields
@@ -97,10 +102,15 @@ public class SomniumPlayerData {
     private final Map<ResourceLocation, AbilityInstance> abilityInventory = new LinkedHashMap<>();
 
     /**
-     * The ability bar — 6 slots, each holding a reference to an ability
-     * in the inventory (by registry name), or null for an empty slot.
+     * The ability bar — MAX_PAGES pages × BAR_SIZE slots.
+     * Indexed as [page * BAR_SIZE + slot].
      */
-    private final ResourceLocation[] abilityBar = new ResourceLocation[BAR_SIZE];
+    private final ResourceLocation[] abilityBar = new ResourceLocation[MAX_PAGES * BAR_SIZE];
+
+    /**
+     * The currently active bar page (0 to MAX_PAGES-1).
+     */
+    private int activePage = 0;
 
     /**
      * On/off state for passive abilities. Keyed by ability registry name.
@@ -271,8 +281,8 @@ public class SomniumPlayerData {
         abilityInventory.remove(key);
         passiveStates.remove(key);
 
-        // Clear from bar if equipped
-        for (int i = 0; i < BAR_SIZE; i++) {
+        // Clear from bar if equipped (check all pages)
+        for (int i = 0; i < MAX_PAGES * BAR_SIZE; i++) {
             if (key.equals(abilityBar[i])) {
                 abilityBar[i] = null;
             }
@@ -341,77 +351,104 @@ public class SomniumPlayerData {
     //  Ability bar management
     // ═══════════════════════════════════════════════════════════════════
 
+    /** @return the currently active bar page (0 to MAX_PAGES-1) */
+    public int getActivePage() { return activePage; }
+
     /**
-     * Equips an ability to a bar slot. The ability must be unlocked and
-     * bar-equippable (not a passive).
+     * Sets the active bar page.
+     * @param page the page index (0 to MAX_PAGES-1)
+     */
+    public void setActivePage(int page) {
+        if (page >= 0 && page < MAX_PAGES) {
+            this.activePage = page;
+            markDirty();
+        }
+    }
+
+    /** Converts page + slot to flat array index. */
+    private int barIndex(int page, int slot) {
+        return page * BAR_SIZE + slot;
+    }
+
+    /**
+     * Equips an ability to a bar slot on a specific page.
      *
-     * @param slot        the bar slot index (0 to {@link #BAR_SIZE}-1)
-     * @param abilityType the ability to equip, or null to clear the slot
+     * @param page        the page index (0 to MAX_PAGES-1)
+     * @param slot        the slot index (0 to BAR_SIZE-1)
+     * @param abilityType the ability to equip, or null to clear
      * @return {@code true} if the operation succeeded
      */
-    public boolean setBarSlot(int slot, @Nullable AbilityType abilityType) {
-        if (slot < 0 || slot >= BAR_SIZE) return false;
+    public boolean setBarSlot(int page, int slot, @Nullable AbilityType abilityType) {
+        if (page < 0 || page >= MAX_PAGES || slot < 0 || slot >= BAR_SIZE) return false;
+        int index = barIndex(page, slot);
 
         if (abilityType == null) {
-            abilityBar[slot] = null;
+            abilityBar[index] = null;
             markDirty();
             return true;
         }
 
-        // Validate: must be unlocked and bar-equippable
         ResourceLocation key = SomniumRegistries.getAbilityKey(abilityType);
         if (key == null || !unlockedAbilities.contains(key)) return false;
         if (!abilityType.isBarEquippable()) return false;
 
-        abilityBar[slot] = key;
+        abilityBar[index] = key;
         markDirty();
         return true;
     }
 
     /**
-     * Gets the AbilityInstance in a specific bar slot.
-     *
-     * @param slot the bar slot index (0 to {@link #BAR_SIZE}-1)
-     * @return the instance in that slot, or null if the slot is empty
+     * Equips an ability to a slot on the ACTIVE page.
+     * Backward-compatible with code that doesn't know about pages.
+     */
+    public boolean setBarSlot(int slot, @Nullable AbilityType abilityType) {
+        return setBarSlot(activePage, slot, abilityType);
+    }
+
+    /**
+     * Gets the AbilityInstance in a bar slot on a specific page.
      */
     @Nullable
-    public AbilityInstance getBarSlotInstance(int slot) {
-        if (slot < 0 || slot >= BAR_SIZE) return null;
-        ResourceLocation key = abilityBar[slot];
+    public AbilityInstance getBarSlotInstance(int page, int slot) {
+        if (page < 0 || page >= MAX_PAGES || slot < 0 || slot >= BAR_SIZE) return null;
+        ResourceLocation key = abilityBar[barIndex(page, slot)];
         return key != null ? abilityInventory.get(key) : null;
     }
 
-    /**
-     * Gets the ability type registry name in a specific bar slot.
-     *
-     * @param slot the bar slot index
-     * @return the registry name, or null if empty
-     */
+    /** Gets the AbilityInstance in a slot on the ACTIVE page. */
     @Nullable
-    public ResourceLocation getBarSlotKey(int slot) {
-        if (slot < 0 || slot >= BAR_SIZE) return null;
-        return abilityBar[slot];
+    public AbilityInstance getBarSlotInstance(int slot) {
+        return getBarSlotInstance(activePage, slot);
     }
 
-    /**
-     * Clears all bar slots.
-     */
+    /** Gets the ability key in a slot on a specific page. */
+    @Nullable
+    public ResourceLocation getBarSlotKey(int page, int slot) {
+        if (page < 0 || page >= MAX_PAGES || slot < 0 || slot >= BAR_SIZE) return null;
+        return abilityBar[barIndex(page, slot)];
+    }
+
+    /** Gets the ability key in a slot on the ACTIVE page. */
+    @Nullable
+    public ResourceLocation getBarSlotKey(int slot) {
+        return getBarSlotKey(activePage, slot);
+    }
+
+    /** Clears all bar slots on all pages. */
     public void clearBar() {
         Arrays.fill(abilityBar, null);
         markDirty();
     }
 
     /**
-     * Finds which bar slot an ability occupies.
-     *
-     * @param abilityType the ability to find
-     * @return the slot index (0 to BAR_SIZE-1), or -1 if not on the bar
+     * Finds which bar slot (on the active page) an ability occupies.
+     * @return the slot index (0 to BAR_SIZE-1), or -1 if not on the active page
      */
     public int findBarSlot(AbilityType abilityType) {
         ResourceLocation key = SomniumRegistries.getAbilityKey(abilityType);
         if (key == null) return -1;
         for (int i = 0; i < BAR_SIZE; i++) {
-            if (key.equals(abilityBar[i])) return i;
+            if (key.equals(abilityBar[barIndex(activePage, i)])) return i;
         }
         return -1;
     }
@@ -606,7 +643,8 @@ public class SomniumPlayerData {
         this.abilityInventory.clear();
         this.abilityInventory.putAll(source.abilityInventory);
 
-        System.arraycopy(source.abilityBar, 0, this.abilityBar, 0, BAR_SIZE);
+        System.arraycopy(source.abilityBar, 0, this.abilityBar, 0, MAX_PAGES * BAR_SIZE);
+        this.activePage = source.activePage;
 
         this.passiveStates.clear();
         this.passiveStates.putAll(source.passiveStates);
@@ -667,17 +705,22 @@ public class SomniumPlayerData {
         }
         root.put(TAG_ABILITY_INVENTORY, inventoryTag);
 
-        // Ability bar — list of {Slot, AbilityId} entries
+        // Ability bar — list of {Page, Slot, AbilityId} entries across all pages
         ListTag barTag = new ListTag();
-        for (int i = 0; i < BAR_SIZE; i++) {
-            if (abilityBar[i] != null) {
-                CompoundTag slotTag = new CompoundTag();
-                slotTag.putInt(TAG_BAR_SLOT, i);
-                slotTag.putString(TAG_BAR_ABILITY_ID, abilityBar[i].toString());
-                barTag.add(slotTag);
+        for (int page = 0; page < MAX_PAGES; page++) {
+            for (int slot = 0; slot < BAR_SIZE; slot++) {
+                int index = barIndex(page, slot);
+                if (abilityBar[index] != null) {
+                    CompoundTag slotTag = new CompoundTag();
+                    slotTag.putInt(TAG_BAR_PAGE, page);
+                    slotTag.putInt(TAG_BAR_SLOT, slot);
+                    slotTag.putString(TAG_BAR_ABILITY_ID, abilityBar[index].toString());
+                    barTag.add(slotTag);
+                }
             }
         }
         root.put(TAG_ABILITY_BAR, barTag);
+        root.putInt(TAG_ACTIVE_PAGE, activePage);
 
         // Passive states — list of {Id, Enabled} entries
         ListTag passivesTag = new ListTag();
@@ -733,21 +776,24 @@ public class SomniumPlayerData {
             }
         }
 
-        // Ability bar
+        // Ability bar (paged)
         Arrays.fill(abilityBar, null);
         ListTag barTag = root.getList(TAG_ABILITY_BAR, Tag.TAG_COMPOUND);
         for (int i = 0; i < barTag.size(); i++) {
             CompoundTag slotTag = barTag.getCompound(i);
+            int page = slotTag.contains(TAG_BAR_PAGE) ? slotTag.getInt(TAG_BAR_PAGE) : 0;
             int slot = slotTag.getInt(TAG_BAR_SLOT);
-            if (slot >= 0 && slot < BAR_SIZE) {
+            if (page >= 0 && page < MAX_PAGES && slot >= 0 && slot < BAR_SIZE) {
                 ResourceLocation abilityKey = new ResourceLocation(
                         slotTag.getString(TAG_BAR_ABILITY_ID));
-                // Only restore bar slot if the ability still exists in inventory
                 if (abilityInventory.containsKey(abilityKey)) {
-                    abilityBar[slot] = abilityKey;
+                    abilityBar[barIndex(page, slot)] = abilityKey;
                 }
             }
         }
+        activePage = root.contains(TAG_ACTIVE_PAGE)
+                ? Math.max(0, Math.min(MAX_PAGES - 1, root.getInt(TAG_ACTIVE_PAGE)))
+                : 0;
 
         // Passive states
         passiveStates.clear();

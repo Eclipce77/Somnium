@@ -1,7 +1,6 @@
 package net.eclipce.somnium.client;
 
 import net.eclipce.somnium.Somnium;
-import net.eclipce.somnium.client.gui.AbilityBarOverlay;
 import net.eclipce.somnium.client.keybind.SomniumKeybinds;
 import net.eclipce.somnium.core.data.SomniumPlayerData;
 import net.eclipce.somnium.network.ActivateAbilityPacket;
@@ -125,15 +124,21 @@ public class SomniumClientEvents {
                 slotKeyHeld[slot] = isDown;
             }
 
-            // Process utility keys — these use consumeClick() since they're
-            // instant actions, not hold-sensitive
+            // Process utility keys
             if (SomniumKeybinds.PAGE_TOGGLE.consumeClick()) {
-                AbilityBarOverlay.cyclePage();
+                SomniumPlayerData localData = ClientAbilityData.getLocalData();
+                if (localData != null) {
+                    int nextPage = (localData.getActivePage() + 1) % SomniumPlayerData.MAX_PAGES;
+                    localData.setActivePage(nextPage);
+                    AbilityBarOverlay.cyclePage();
+                }
             }
 
             if (SomniumKeybinds.ABILITY_INVENTORY.consumeClick()) {
-                // TODO (Layer 7): Open the ability inventory screen
-                // For now, this is a placeholder
+                SomniumPlayerData localData = ClientAbilityData.getLocalData();
+                if (localData != null) {
+                    mc.setScreen(new AbilityInventoryScreen(localData));
+                }
             }
 
             if (SomniumKeybinds.TRANSFORMATION_QUICKBIND.consumeClick()) {

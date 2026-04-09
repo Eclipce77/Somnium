@@ -1,8 +1,7 @@
-package net.eclipce.somnium.client.gui;
+package net.eclipce.somnium.client;
 
 import com.mojang.blaze3d.systems.RenderSystem;
 import net.eclipce.somnium.Somnium;
-import net.eclipce.somnium.client.ClientAbilityData;
 import net.eclipce.somnium.client.config.BarPosition;
 import net.eclipce.somnium.client.config.SomniumClientConfig;
 import net.eclipce.somnium.client.keybind.SomniumKeybinds;
@@ -78,32 +77,38 @@ public class AbilityBarOverlay implements IGuiOverlay {
     private static final int KEYBIND_LABEL_GAP = 2;
 
     // ═══════════════════════════════════════════════════════════════════
-    //  Page tracking (client-side only, until pages are in the data model)
+    //  Page tracking
     // ═══════════════════════════════════════════════════════════════════
 
-    /** The current page index. Currently always 0 (single page). */
-    private static int currentPage = 0;
-
-    /** Total number of pages. Currently always 1. */
-    private static int totalPages = 1;
-
     /**
-     * Cycles to the next page. Called when the page toggle key is pressed.
+     * Cycles to the next page in the client data.
+     * Called when the page toggle key is pressed.
      */
     public static void cyclePage() {
-        if (totalPages > 1) {
-            currentPage = (currentPage + 1) % totalPages;
+        SomniumPlayerData data = ClientAbilityData.getLocalData();
+        if (data != null) {
+            int nextPage = (data.getActivePage() + 1) % SomniumPlayerData.MAX_PAGES;
+            data.setActivePage(nextPage);
         }
     }
 
-    /** @return the current page index */
+    /** @return the current active page from client data, or 0 */
     public static int getCurrentPage() {
-        return currentPage;
+        SomniumPlayerData data = ClientAbilityData.getLocalData();
+        return data != null ? data.getActivePage() : 0;
     }
 
-    /** @return total number of pages */
-    public static int getTotalPages() {
-        return totalPages;
+    /** @return true if the player has abilities on more than one page */
+    private static boolean isPaged() {
+        SomniumPlayerData data = ClientAbilityData.getLocalData();
+        if (data == null) return false;
+        // Show paged texture if any slot on page 1+ has content
+        for (int page = 1; page < SomniumPlayerData.MAX_PAGES; page++) {
+            for (int slot = 0; slot < SomniumPlayerData.BAR_SIZE; slot++) {
+                if (data.getBarSlotKey(page, slot) != null) return true;
+            }
+        }
+        return false;
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -121,9 +126,9 @@ public class AbilityBarOverlay implements IGuiOverlay {
         if (data == null) return;
 
         // Determine if we should show the paged texture
-        boolean isPaged = totalPages > 1;
-        int visibleHeight = isPaged ? VISIBLE_HEIGHT_PAGED : VISIBLE_HEIGHT_NORMAL;
-        ResourceLocation texture = isPaged ? BAR_TEXTURE_PAGED : BAR_TEXTURE;
+        boolean paged = isPaged();
+        int visibleHeight = paged ? VISIBLE_HEIGHT_PAGED : VISIBLE_HEIGHT_NORMAL;
+        ResourceLocation texture = paged ? BAR_TEXTURE_PAGED : BAR_TEXTURE;
 
         // Get config values
         BarPosition position = SomniumClientConfig.getBarPosition();

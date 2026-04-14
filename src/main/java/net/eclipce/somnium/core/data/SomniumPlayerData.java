@@ -453,6 +453,35 @@ public class SomniumPlayerData {
         return -1;
     }
 
+    /**
+     * Checks if an ability is on any bar slot across all pages.
+     *
+     * @param key the registry key of the ability
+     * @return {@code true} if the ability is equipped on any page
+     */
+    public boolean isAbilityOnAnyBar(@Nullable ResourceLocation key) {
+        if (key == null) return false;
+        for (int i = 0; i < abilityBar.length; i++) {
+            if (key.equals(abilityBar[i])) return true;
+        }
+        return false;
+    }
+
+    /**
+     * Checks if an ability is on any bar slot on a specific page.
+     *
+     * @param page the page to check
+     * @param key  the registry key of the ability
+     * @return {@code true} if the ability is on that page's bar
+     */
+    public boolean isAbilityOnPage(int page, @Nullable ResourceLocation key) {
+        if (key == null || page < 0 || page >= MAX_PAGES) return false;
+        for (int slot = 0; slot < BAR_SIZE; slot++) {
+            if (key.equals(abilityBar[barIndex(page, slot)])) return true;
+        }
+        return false;
+    }
+
     // ═══════════════════════════════════════════════════════════════════
     //  Passive ability states
     // ═══════════════════════════════════════════════════════════════════

@@ -99,6 +99,12 @@ public final class SomniumNetwork {
                 .consumerMainThread(TogglePassivePacket::handle)
                 .add();
 
+        CHANNEL.messageBuilder(RequestSyncPacket.class, packetId++, NetworkDirection.PLAY_TO_SERVER)
+                .encoder(RequestSyncPacket::encode)
+                .decoder(RequestSyncPacket::decode)
+                .consumerMainThread(RequestSyncPacket::handle)
+                .add();
+
         Somnium.LOGGER.debug("Somnium network channel initialized with {} packet types", packetId);
     }
 

@@ -9,24 +9,32 @@ import net.eclipce.somnium.core.ability.transformation.TransformationAbilityType
 import net.eclipce.somnium.core.data.SomniumPlayerData;
 import net.eclipce.somnium.core.power.Power;
 import net.eclipce.somnium.core.registry.SomniumRegistries;
+import net.eclipce.somnium.network.RequestSyncPacket;
 import net.eclipce.somnium.network.SomniumNetwork;
 import net.eclipce.somnium.network.UpdateBarSlotPacket;
+import net.minecraft.ChatFormatting;
 import net.minecraft.client.gui.GuiGraphics;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceLocation;
 
+import javax.annotation.Nullable;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Optional;
 
 /**
  * The ability inventory screen for managing abilities and bar layout.
  *
+ * <p>Supports drag-and-drop interaction similar to a standard Minecraft
+ * container. Abilities can be picked up from the grid and placed onto
+ * bar slots, or picked up from bar slots and returned to the pool.</p>
+ *
  * <h3>Layout</h3>
  * <ul>
- *     <li><b>Left tabs</b> — one per granted power, dynamically generated, scrollable</li>
- *     <li><b>Right tabs</b> — ability type filter: Transformations (T), Standard (A), Passives (P)</li>
- *     <li><b>Ability grid</b> — 5×8 grid showing abilities filtered by power + type</li>
+ *     <li><b>Left tabs</b> — one per granted power, scrollable</li>
+ *     <li><b>Right tabs</b> — type filter: Transformations (T), Standard (A), Passives (P)</li>
+ *     <li><b>Ability grid</b> — 5×8 grid showing filtered abilities</li>
  *     <li><b>Ability bar</b> — 6 slots for the selected page</li>
  *     <li><b>Page arrows</b> — below the bar, cycle through bar pages</li>
  * </ul>
@@ -78,54 +86,47 @@ public class AbilityInventoryScreen extends Screen {
     //  Layout constants (all relative to the visible area top-left)
     // ═══════════════════════════════════════════════════════════════════
 
-    // Background texture canvas
     private static final int TEX_W = 427, TEX_H = 240;
-    // Visible area within texture
     private static final int VIS_X = 125, VIS_Y = 37, VIS_W = 197, VIS_H = 166;
 
-    // --- Ability grid (slot overlay) ---
-    // Matches ability_slots.png layout: 5 cols × 8 rows, 18px pitch
+    // Ability grid (slot overlay): 5 cols × 8 rows, 18px pitch
     private static final int GRID_REL_X = 10, GRID_REL_Y = 11;
     private static final int GRID_COLS = 5, GRID_ROWS = 8;
     private static final int CELL_PITCH = 18;
     private static final int CELL_CONTENT = 16;
-    // Icon draw offset within each cell (1px border on left/top)
     private static final int CELL_ICON_OFFSET = 1;
 
-    // --- Ability bar slots (built into background texture) ---
+    // Ability bar slots (built into background texture)
     private static final int BAR_REL_X = 131;
     private static final int[] BAR_SLOT_REL_Y = {28, 47, 66, 85, 104, 123};
     private static final int ICON_SIZE = 16;
 
-    // --- Left power tabs ---
+    // Left power tabs
     private static final int LEFT_TAB_REL_X = -25;
     private static final int LEFT_TAB_START_REL_Y = 20;
     private static final int LEFT_TAB_SPACING = 29;
     private static final int LEFT_TAB_W = 32, LEFT_TAB_H = 28;
     private static final int MAX_VISIBLE_TABS = 4;
 
-    // --- Left tab scroll arrows ---
+    // Left tab scroll arrows
     private static final int SCROLL_ARROW_REL_X = LEFT_TAB_REL_X + 3;
     private static final int SCROLL_UP_REL_Y = LEFT_TAB_START_REL_Y - 14;
     private static final int SCROLL_DOWN_REL_Y = LEFT_TAB_START_REL_Y + MAX_VISIBLE_TABS * LEFT_TAB_SPACING + 2;
     private static final int SCROLL_ARROW_W = 32, SCROLL_ARROW_H = 32;
 
-    // --- Right type tabs (T, A, P) --- positions match texture built-in tabs
+    // Right type tabs (T, A, P) — positions match texture built-in tabs
     private static final int RIGHT_TAB_REL_X = 170;
     private static final int[] RIGHT_TAB_REL_Y = {43, 70, 97};
     private static final int RIGHT_TAB_W = 26, RIGHT_TAB_H = 25;
     private static final int RIGHT_TAB_TEX_W = 32, RIGHT_TAB_TEX_H = 28;
     private static final String[] TYPE_TAB_LABELS = {"T", "A", "P"};
 
-    // --- Page arrows (below bar, overlay on built-in arrows) ---
+    // Page arrows (below bar, overlay on built-in arrows)
     private static final int PAGE_ARROW_W = 8, PAGE_ARROW_H = 10;
     private static final int PAGE_BACK_REL_X = 128, PAGE_BACK_REL_Y = 145;
     private static final int PAGE_FWD_REL_X = 142, PAGE_FWD_REL_Y = 145;
 
-    // ═══════════════════════════════════════════════════════════════════
-    //  Ability type tab indices
-    // ═══════════════════════════════════════════════════════════════════
-
+    // Tab type indices
     private static final int TAB_TRANSFORMATIONS = 0;
     private static final int TAB_STANDARD = 1;
     private static final int TAB_PASSIVES = 2;
@@ -146,6 +147,16 @@ public class AbilityInventoryScreen extends Screen {
     private List<Power> powers = new ArrayList<>();
     private List<AbilityType> currentAbilities = new ArrayList<>();
 
+    /** The ability currently being carried on the cursor, or null. */
+    @Nullable
+    private AbilityType heldAbility = null;
+
+    /**
+     * Whether the held ability came from a bar slot (true) or the grid (false).
+     * When picked from bar, the slot was already cleared via packet.
+     */
+    private boolean heldFromBar = false;
+
     // ═══════════════════════════════════════════════════════════════════
     //  Construction
     // ═══════════════════════════════════════════════════════════════════
@@ -162,6 +173,9 @@ public class AbilityInventoryScreen extends Screen {
         leftPos = (width - VIS_W) / 2;
         topPos = (height - VIS_H) / 2;
         refreshPowers();
+
+        // Request fresh data from server when screen opens
+        SomniumNetwork.sendToServer(new RequestSyncPacket());
     }
 
     @Override
@@ -210,6 +224,24 @@ public class AbilityInventoryScreen extends Screen {
     }
 
     // ═══════════════════════════════════════════════════════════════════
+    //  Helper: transformation graying
+    // ═══════════════════════════════════════════════════════════════════
+
+    /**
+     * Returns true if the given ability should be grayed out and non-interactive.
+     * Transformations are grayed when another transformation is active.
+     */
+    private boolean isAbilityGrayed(AbilityType type) {
+        if (type instanceof TransformationAbilityType && data.hasActiveTransformation()) {
+            // Allow interacting with the currently active transformation
+            ResourceLocation activeKey = data.getActiveTransformation();
+            ResourceLocation thisKey = SomniumRegistries.getAbilityKey(type);
+            return !java.util.Objects.equals(activeKey, thisKey);
+        }
+        return false;
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
     //  Rendering
     // ═══════════════════════════════════════════════════════════════════
 
@@ -225,6 +257,7 @@ public class AbilityInventoryScreen extends Screen {
         renderTabScrollArrows(graphics, mouseX, mouseY);
         renderPageArrows(graphics, mouseX, mouseY);
         renderTooltips(graphics, mouseX, mouseY);
+        renderHeldAbility(graphics, mouseX, mouseY);
         super.render(graphics, mouseX, mouseY, partialTick);
     }
 
@@ -244,11 +277,8 @@ public class AbilityInventoryScreen extends Screen {
 
         int rowsNeeded = Math.min(GRID_ROWS,
                 (currentAbilities.size() + GRID_COLS - 1) / GRID_COLS);
-        // Each row is CELL_PITCH px; +1 for the initial top border
         int cropHeight = Math.min(144, 1 + rowsNeeded * CELL_PITCH);
 
-        // Blit from the same UV space as the slots texture
-        // Texture origin for slots: (135, 48) in the 427×240 canvas
         int slotsTexX = 135, slotsTexY = 48;
         RenderSystem.enableBlend();
         graphics.blit(SLOTS_OVERLAY,
@@ -281,11 +311,21 @@ public class AbilityInventoryScreen extends Screen {
             graphics.blit(tabTex, tabX, tabY, 0, 0,
                     LEFT_TAB_W, LEFT_TAB_H, LEFT_TAB_W, LEFT_TAB_H);
 
-            // Power icon centered in tab
+            // Power icon or first letter fallback
             Power power = powers.get(powerIndex);
             if (power.getIcon() != null) {
                 graphics.blit(power.getIcon(), tabX + 8, tabY + 6,
                         0, 0, 16, 16, 16, 16);
+            } else {
+                // Fallback: render first letter of power name
+                String initial = power.getDisplayName().getString();
+                if (!initial.isEmpty()) {
+                    initial = initial.substring(0, 1).toUpperCase();
+                    int tx = tabX + (LEFT_TAB_W - font.width(initial)) / 2;
+                    int ty = tabY + (LEFT_TAB_H - font.lineHeight) / 2;
+                    graphics.drawString(font, initial, tx, ty,
+                            isSelected ? 0xFFFFFF : 0xAAAAAA, false);
+                }
             }
         }
     }
@@ -304,7 +344,6 @@ public class AbilityInventoryScreen extends Screen {
                         RIGHT_TAB_TEX_W, RIGHT_TAB_TEX_H);
             }
 
-            // Label centered in tab
             String label = TYPE_TAB_LABELS[i];
             int textX = tabX + (RIGHT_TAB_W - font.width(label)) / 2;
             int textY = tabY + (RIGHT_TAB_H - font.lineHeight) / 2;
@@ -323,19 +362,49 @@ public class AbilityInventoryScreen extends Screen {
                 AbilityType type = currentAbilities.get(index);
                 int iconX = leftPos + GRID_REL_X + CELL_ICON_OFFSET + col * CELL_PITCH;
                 int iconY = topPos + GRID_REL_Y + CELL_ICON_OFFSET + row * CELL_PITCH;
+                boolean grayed = isAbilityGrayed(type);
 
+                // Render ability icon
                 if (type.getIcon() != null) {
                     RenderSystem.enableBlend();
+                    if (grayed) {
+                        RenderSystem.setShaderColor(0.4f, 0.4f, 0.4f, 0.7f);
+                    }
                     graphics.blit(type.getIcon(), iconX, iconY,
                             0, 0, CELL_CONTENT, CELL_CONTENT, CELL_CONTENT, CELL_CONTENT);
+                    RenderSystem.setShaderColor(1f, 1f, 1f, 1f);
                     RenderSystem.disableBlend();
                 } else {
+                    int color = grayed ? 0xFF333333 : 0xFF555555;
                     graphics.fill(iconX + 2, iconY + 2,
                             iconX + CELL_CONTENT - 2, iconY + CELL_CONTENT - 2,
-                            0xFF555555);
+                            color);
                 }
 
-                if (isInBounds(mouseX, mouseY, iconX, iconY, CELL_CONTENT, CELL_CONTENT)) {
+                // Cooldown sweep overlay
+                AbilityInstance instance = data.getAbilityInstance(type);
+                if (instance != null && instance.isOnCooldown()) {
+                    float progress = instance.getCooldownProgress();
+                    // Render a partial overlay from top, shrinking as cooldown progresses
+                    int overlayHeight = Math.round(CELL_CONTENT * (1.0f - progress));
+                    if (overlayHeight > 0) {
+                        graphics.fill(iconX, iconY,
+                                iconX + CELL_CONTENT, iconY + overlayHeight,
+                                0x80000000);
+                    }
+                }
+
+                // Duplicate indicator: dim if already on current page's bar
+                ResourceLocation abilityKey = SomniumRegistries.getAbilityKey(type);
+                if (abilityKey != null && data.isAbilityOnPage(selectedPage, abilityKey)) {
+                    graphics.fill(iconX, iconY,
+                            iconX + CELL_CONTENT, iconY + CELL_CONTENT,
+                            0x40FF0000);
+                }
+
+                // Hover highlight (only if not carrying an ability)
+                if (heldAbility == null && !grayed
+                        && isInBounds(mouseX, mouseY, iconX, iconY, CELL_CONTENT, CELL_CONTENT)) {
                     graphics.fill(iconX, iconY,
                             iconX + CELL_CONTENT, iconY + CELL_CONTENT,
                             0x40FFFFFF);
@@ -359,6 +428,8 @@ public class AbilityInventoryScreen extends Screen {
             AbilityInstance instance = data.getBarSlotInstance(selectedPage, slot);
             if (instance != null) {
                 AbilityType type = instance.getAbilityType();
+
+                // Render icon
                 if (type.getIcon() != null) {
                     RenderSystem.enableBlend();
                     graphics.blit(type.getIcon(), slotX, slotY,
@@ -369,12 +440,44 @@ public class AbilityInventoryScreen extends Screen {
                             slotX + ICON_SIZE - 2, slotY + ICON_SIZE - 2,
                             0xFF555555);
                 }
+
+                // Active/toggle indicator — green border if currently active
+                if (instance.isActive()) {
+                    // Top
+                    graphics.fill(slotX, slotY, slotX + ICON_SIZE, slotY + 1, 0xFF00FF00);
+                    // Bottom
+                    graphics.fill(slotX, slotY + ICON_SIZE - 1, slotX + ICON_SIZE, slotY + ICON_SIZE, 0xFF00FF00);
+                    // Left
+                    graphics.fill(slotX, slotY, slotX + 1, slotY + ICON_SIZE, 0xFF00FF00);
+                    // Right
+                    graphics.fill(slotX + ICON_SIZE - 1, slotY, slotX + ICON_SIZE, slotY + ICON_SIZE, 0xFF00FF00);
+                }
+
+                // Cooldown overlay on bar slot too
+                if (instance.isOnCooldown()) {
+                    float progress = instance.getCooldownProgress();
+                    int overlayHeight = Math.round(ICON_SIZE * (1.0f - progress));
+                    if (overlayHeight > 0) {
+                        graphics.fill(slotX, slotY,
+                                slotX + ICON_SIZE, slotY + overlayHeight,
+                                0x80000000);
+                    }
+                }
+
+                // Transformation indicator — "T" badge for transformation abilities
+                if (type instanceof TransformationAbilityType) {
+                    graphics.drawString(font, "T", slotX + 1, slotY + 1, 0xFFFF00, false);
+                }
             }
 
+            // Hover highlight
             if (isInBounds(mouseX, mouseY, slotX, slotY, ICON_SIZE, ICON_SIZE)) {
+                // Green highlight when holding an ability (can drop here)
+                // White highlight when empty cursor (can pick up)
+                int highlightColor = heldAbility != null ? 0x4000FF00 : 0x40FFFFFF;
                 graphics.fill(slotX, slotY,
                         slotX + ICON_SIZE, slotY + ICON_SIZE,
-                        0x40FFFFFF);
+                        highlightColor);
             }
         }
     }
@@ -401,16 +504,10 @@ public class AbilityInventoryScreen extends Screen {
         }
     }
 
-    /**
-     * Renders the page arrows below the ability bar.
-     * The background texture has built-in "disabled" arrows. We overlay
-     * the highlighted arrow texture when that direction IS clickable.
-     */
     private void renderPageArrows(GuiGraphics graphics, int mouseX, int mouseY) {
         boolean canGoBack = selectedPage > 0;
         boolean canGoFwd = selectedPage < SomniumPlayerData.MAX_PAGES - 1;
 
-        // Only overlay the highlighted arrow when the direction is available
         if (canGoBack) {
             int bx = leftPos + PAGE_BACK_REL_X;
             int by = topPos + PAGE_BACK_REL_Y;
@@ -432,7 +529,36 @@ public class AbilityInventoryScreen extends Screen {
         }
     }
 
+    /**
+     * Renders the ability being carried on the cursor, semi-transparent
+     * and following the mouse position.
+     */
+    private void renderHeldAbility(GuiGraphics graphics, int mouseX, int mouseY) {
+        if (heldAbility == null) return;
+
+        int drawX = mouseX - ICON_SIZE / 2;
+        int drawY = mouseY - ICON_SIZE / 2;
+
+        RenderSystem.enableBlend();
+        RenderSystem.setShaderColor(1f, 1f, 1f, 0.75f);
+
+        if (heldAbility.getIcon() != null) {
+            graphics.blit(heldAbility.getIcon(), drawX, drawY,
+                    0, 0, ICON_SIZE, ICON_SIZE, ICON_SIZE, ICON_SIZE);
+        } else {
+            graphics.fill(drawX + 2, drawY + 2,
+                    drawX + ICON_SIZE - 2, drawY + ICON_SIZE - 2,
+                    0xBB555555);
+        }
+
+        RenderSystem.setShaderColor(1f, 1f, 1f, 1f);
+        RenderSystem.disableBlend();
+    }
+
     private void renderTooltips(GuiGraphics graphics, int mouseX, int mouseY) {
+        // Don't show tooltips while carrying an ability
+        if (heldAbility != null) return;
+
         // Grid tooltips
         int startIndex = gridScrollRow * GRID_COLS;
         for (int row = 0; row < GRID_ROWS; row++) {
@@ -445,11 +571,8 @@ public class AbilityInventoryScreen extends Screen {
 
                 if (isInBounds(mouseX, mouseY, iconX, iconY, CELL_CONTENT, CELL_CONTENT)) {
                     AbilityType type = currentAbilities.get(index);
-                    List<Component> tooltip = new ArrayList<>();
-                    tooltip.add(type.getDisplayName());
-                    Component desc = type.getDescription();
-                    if (desc != null) tooltip.add(desc);
-                    graphics.renderTooltip(font, tooltip, java.util.Optional.empty(),
+                    List<Component> tooltip = buildAbilityTooltip(type);
+                    graphics.renderTooltip(font, tooltip, Optional.empty(),
                             mouseX, mouseY);
                     return;
                 }
@@ -463,11 +586,10 @@ public class AbilityInventoryScreen extends Screen {
             if (isInBounds(mouseX, mouseY, slotX, slotY, ICON_SIZE, ICON_SIZE)) {
                 AbilityInstance instance = data.getBarSlotInstance(selectedPage, slot);
                 if (instance != null) {
-                    List<Component> tooltip = new ArrayList<>();
-                    tooltip.add(instance.getAbilityType().getDisplayName());
+                    List<Component> tooltip = buildAbilityTooltip(instance.getAbilityType());
                     tooltip.add(Component.translatable("tooltip." + Somnium.MOD_ID + ".click_to_remove")
-                            .withStyle(net.minecraft.ChatFormatting.GRAY));
-                    graphics.renderTooltip(font, tooltip, java.util.Optional.empty(),
+                            .withStyle(ChatFormatting.GRAY));
+                    graphics.renderTooltip(font, tooltip, Optional.empty(),
                             mouseX, mouseY);
                 }
                 return;
@@ -475,23 +597,187 @@ public class AbilityInventoryScreen extends Screen {
         }
     }
 
+    /**
+     * Builds a tooltip for an ability, including name, description,
+     * cooldown state, and type info.
+     */
+    private List<Component> buildAbilityTooltip(AbilityType type) {
+        List<Component> tooltip = new ArrayList<>();
+        tooltip.add(type.getDisplayName());
+
+        Component desc = type.getDescription();
+        if (desc != null) tooltip.add(desc);
+
+        // Cooldown info
+        AbilityInstance instance = data.getAbilityInstance(type);
+        if (instance != null && instance.isOnCooldown()) {
+            float seconds = instance.getCooldownRemaining() / 20f;
+            tooltip.add(Component.literal(String.format("Cooldown: %.1fs", seconds))
+                    .withStyle(ChatFormatting.RED));
+        }
+
+        // Type indicator
+        if (type instanceof TransformationAbilityType) {
+            tooltip.add(Component.literal("Transformation")
+                    .withStyle(ChatFormatting.LIGHT_PURPLE));
+        }
+
+        // Grayed indicator
+        if (isAbilityGrayed(type)) {
+            tooltip.add(Component.literal("Another transformation is active")
+                    .withStyle(ChatFormatting.DARK_RED));
+        }
+
+        // Duplicate indicator
+        ResourceLocation key = SomniumRegistries.getAbilityKey(type);
+        if (key != null && data.isAbilityOnPage(selectedPage, key)) {
+            tooltip.add(Component.literal("Already on this page's bar")
+                    .withStyle(ChatFormatting.YELLOW));
+        }
+
+        return tooltip;
+    }
+
     // ═══════════════════════════════════════════════════════════════════
-    //  Click handling
+    //  Click handling — drag and drop
     // ═══════════════════════════════════════════════════════════════════
 
     @Override
     public boolean mouseClicked(double mouseX, double mouseY, int button) {
-        if (button != 0) return super.mouseClicked(mouseX, mouseY, button);
         int mx = (int) mouseX, my = (int) mouseY;
 
+        // Right-click: cancel held ability
+        if (button == 1) {
+            if (heldAbility != null) {
+                heldAbility = null;
+                heldFromBar = false;
+                return true;
+            }
+            return super.mouseClicked(mouseX, mouseY, button);
+        }
+
+        if (button != 0) return super.mouseClicked(mouseX, mouseY, button);
+
+        // UI controls first (these work regardless of held ability)
         if (handlePowerTabClick(mx, my)) return true;
         if (handleTypeTabClick(mx, my)) return true;
         if (handleTabScrollClick(mx, my)) return true;
         if (handlePageArrowClick(mx, my)) return true;
-        if (handleGridClick(mx, my)) return true;
+
+        // Drag-and-drop interactions
         if (handleBarSlotClick(mx, my)) return true;
+        if (handleGridClick(mx, my)) return true;
+
+        // Clicked outside all interactive areas — drop held ability
+        if (heldAbility != null) {
+            heldAbility = null;
+            heldFromBar = false;
+            return true;
+        }
 
         return super.mouseClicked(mouseX, mouseY, button);
+    }
+
+    /**
+     * Handles clicks on bar slots.
+     * - Empty cursor + occupied slot → pick up from bar
+     * - Held ability + empty slot → place ability
+     * - Held ability + occupied slot → replace ability
+     */
+    private boolean handleBarSlotClick(int mx, int my) {
+        for (int slot = 0; slot < SomniumPlayerData.BAR_SIZE; slot++) {
+            int slotX = leftPos + BAR_REL_X;
+            int slotY = topPos + BAR_SLOT_REL_Y[slot];
+
+            if (!isInBounds(mx, my, slotX, slotY, ICON_SIZE, ICON_SIZE)) continue;
+
+            if (heldAbility != null) {
+                // Placing held ability into this bar slot
+                ResourceLocation heldKey = SomniumRegistries.getAbilityKey(heldAbility);
+                if (heldKey == null) return true;
+
+                // Duplicate check: can't place if already on this page
+                if (data.isAbilityOnPage(selectedPage, heldKey)) {
+                    return true; // Consumed click, but do nothing
+                }
+
+                // Don't allow passives onto the bar
+                if (!heldAbility.isBarEquippable()) return true;
+
+                // Send equip packet (server handles replacement events)
+                SomniumNetwork.sendToServer(
+                        new UpdateBarSlotPacket(selectedPage, slot, heldKey));
+
+                // Optimistic client update
+                data.setBarSlot(selectedPage, slot, heldAbility);
+
+                heldAbility = null;
+                heldFromBar = false;
+                return true;
+
+            } else {
+                // Picking up from bar slot
+                AbilityInstance instance = data.getBarSlotInstance(selectedPage, slot);
+                if (instance == null) return true; // Empty slot
+
+                heldAbility = instance.getAbilityType();
+                heldFromBar = true;
+
+                // Send clear packet
+                SomniumNetwork.sendToServer(
+                        new UpdateBarSlotPacket(selectedPage, slot, null));
+
+                // Optimistic client update
+                data.setBarSlot(selectedPage, slot, null);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
+     * Handles clicks on the ability grid.
+     * - Empty cursor → pick up ability from grid
+     * - Held ability → drop back (cancel, since grid is creative-mode)
+     */
+    private boolean handleGridClick(int mx, int my) {
+        // Passives tab: no drag-and-drop (future: toggle on/off)
+        if (selectedTypeTab == TAB_PASSIVES) return false;
+
+        int startIndex = gridScrollRow * GRID_COLS;
+        for (int row = 0; row < GRID_ROWS; row++) {
+            for (int col = 0; col < GRID_COLS; col++) {
+                int index = startIndex + row * GRID_COLS + col;
+                if (index >= currentAbilities.size()) return false;
+
+                int iconX = leftPos + GRID_REL_X + CELL_ICON_OFFSET + col * CELL_PITCH;
+                int iconY = topPos + GRID_REL_Y + CELL_ICON_OFFSET + row * CELL_PITCH;
+
+                if (!isInBounds(mx, my, iconX, iconY, CELL_CONTENT, CELL_CONTENT)) continue;
+
+                if (heldAbility != null) {
+                    // Clicking grid with held ability → just drop it (returns to pool)
+                    heldAbility = null;
+                    heldFromBar = false;
+                    return true;
+                }
+
+                // Pick up ability from grid
+                AbilityType type = currentAbilities.get(index);
+
+                // Can't pick up grayed transformations
+                if (isAbilityGrayed(type)) return true;
+
+                // Can't pick up non-bar-equippable abilities
+                if (!type.isBarEquippable()) return true;
+
+                heldAbility = type;
+                heldFromBar = false;
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private boolean handlePowerTabClick(int mx, int my) {
@@ -503,6 +789,9 @@ public class AbilityInventoryScreen extends Screen {
             if (isInBounds(mx, my, tabX, tabY, LEFT_TAB_W, LEFT_TAB_H)) {
                 selectedPowerTab = i + tabScrollOffset;
                 refreshAbilities();
+                // Drop held ability when switching tabs
+                heldAbility = null;
+                heldFromBar = false;
                 return true;
             }
         }
@@ -516,6 +805,9 @@ public class AbilityInventoryScreen extends Screen {
             if (isInBounds(mx, my, tabX, tabY, RIGHT_TAB_W, RIGHT_TAB_H)) {
                 selectedTypeTab = i;
                 refreshAbilities();
+                // Drop held ability when switching type tabs
+                heldAbility = null;
+                heldFromBar = false;
                 return true;
             }
         }
@@ -545,7 +837,6 @@ public class AbilityInventoryScreen extends Screen {
     }
 
     private boolean handlePageArrowClick(int mx, int my) {
-        // Back arrow
         if (selectedPage > 0) {
             int bx = leftPos + PAGE_BACK_REL_X;
             int by = topPos + PAGE_BACK_REL_Y;
@@ -554,63 +845,11 @@ public class AbilityInventoryScreen extends Screen {
                 return true;
             }
         }
-        // Forward arrow
         if (selectedPage < SomniumPlayerData.MAX_PAGES - 1) {
             int fx = leftPos + PAGE_FWD_REL_X;
             int fy = topPos + PAGE_FWD_REL_Y;
             if (isInBounds(mx, my, fx, fy, PAGE_ARROW_W, PAGE_ARROW_H)) {
                 selectedPage++;
-                return true;
-            }
-        }
-        return false;
-    }
-
-    private boolean handleGridClick(int mx, int my) {
-        // Don't allow equipping from the Passives tab (future feature)
-        if (selectedTypeTab == TAB_PASSIVES) return false;
-
-        int startIndex = gridScrollRow * GRID_COLS;
-        for (int row = 0; row < GRID_ROWS; row++) {
-            for (int col = 0; col < GRID_COLS; col++) {
-                int index = startIndex + row * GRID_COLS + col;
-                if (index >= currentAbilities.size()) return false;
-
-                int iconX = leftPos + GRID_REL_X + CELL_ICON_OFFSET + col * CELL_PITCH;
-                int iconY = topPos + GRID_REL_Y + CELL_ICON_OFFSET + row * CELL_PITCH;
-
-                if (isInBounds(mx, my, iconX, iconY, CELL_CONTENT, CELL_CONTENT)) {
-                    AbilityType type = currentAbilities.get(index);
-                    ResourceLocation abilityKey = SomniumRegistries.getAbilityKey(type);
-                    if (abilityKey == null) return false;
-
-                    // Find first empty bar slot on selected page
-                    for (int slot = 0; slot < SomniumPlayerData.BAR_SIZE; slot++) {
-                        if (data.getBarSlotKey(selectedPage, slot) == null) {
-                            SomniumNetwork.sendToServer(
-                                    new UpdateBarSlotPacket(selectedPage, slot, abilityKey));
-                            data.setBarSlot(selectedPage, slot, type);
-                            return true;
-                        }
-                    }
-                    return true; // Bar full — click consumed
-                }
-            }
-        }
-        return false;
-    }
-
-    private boolean handleBarSlotClick(int mx, int my) {
-        for (int slot = 0; slot < SomniumPlayerData.BAR_SIZE; slot++) {
-            int slotX = leftPos + BAR_REL_X;
-            int slotY = topPos + BAR_SLOT_REL_Y[slot];
-
-            if (isInBounds(mx, my, slotX, slotY, ICON_SIZE, ICON_SIZE)) {
-                if (data.getBarSlotKey(selectedPage, slot) != null) {
-                    SomniumNetwork.sendToServer(
-                            new UpdateBarSlotPacket(selectedPage, slot, null));
-                    data.setBarSlot(selectedPage, slot, null);
-                }
                 return true;
             }
         }
@@ -639,6 +878,17 @@ public class AbilityInventoryScreen extends Screen {
         }
 
         return super.mouseScrolled(mouseX, mouseY, delta);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    //  Screen close — drop held ability
+    // ═══════════════════════════════════════════════════════════════════
+
+    @Override
+    public void onClose() {
+        heldAbility = null;
+        heldFromBar = false;
+        super.onClose();
     }
 
     // ═══════════════════════════════════════════════════════════════════

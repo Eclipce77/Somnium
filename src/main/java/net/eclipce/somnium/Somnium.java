@@ -2,6 +2,7 @@ package net.eclipce.somnium;
 
 import com.mojang.logging.LogUtils;
 import net.eclipce.somnium.client.config.SomniumClientConfig;
+import net.eclipce.somnium.command.SomniumCommand;
 import net.eclipce.somnium.core.data.SomniumPlayerData;
 import net.eclipce.somnium.core.registry.SomniumRegistries;
 import net.eclipce.somnium.network.SomniumNetwork;
@@ -33,14 +34,27 @@ public class Somnium {
     {
         IEventBus modEventBus = context.getModEventBus();
 
+        // Layer 2: Register DeferredRegisters so addon mods can register content,
+        // and listen for NewRegistryEvent to create the actual IForgeRegistry instances.
         SomniumRegistries.ABILITY_TYPES.register(modEventBus);
         SomniumRegistries.POWERS.register(modEventBus);
         modEventBus.addListener(SomniumRegistries::onNewRegistry);
+
+        // Layer 3: Register the capability type so Forge knows about it.
         modEventBus.addListener(this::registerCapabilities);
 
+        // Layer 4: Initialize the network channel and register all packet types.
         SomniumNetwork.init();
 
+        // Layer 6: Register client config for ability bar position settings.
+        // Keybind and overlay registration is handled by SomniumClientEvents
+        // via @Mod.EventBusSubscriber (client-side only, auto-discovered).
         ModLoadingContext.get().registerConfig(ModConfig.Type.CLIENT, SomniumClientConfig.SPEC);
+
+        // Layer 9: Register commands on the Forge event bus.
+        MinecraftForge.EVENT_BUS.addListener(
+                (net.minecraftforge.event.RegisterCommandsEvent event) ->
+                        SomniumCommand.register(event.getDispatcher()));
 
         LOGGER.info("Somnium API initialized");
 

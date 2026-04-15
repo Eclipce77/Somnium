@@ -198,8 +198,7 @@ public class AbilityInventoryScreen extends Screen {
         if (selectedPowerTab >= 0 && selectedPowerTab < powers.size()) {
             Power power = powers.get(selectedPowerTab);
             for (AbilityType type : power.getAbilityTypes()) {
-                if (!data.isAbilityUnlocked(type)) continue;
-
+                // Include both unlocked AND locked abilities (locked show grayed)
                 switch (selectedTypeTab) {
                     case TAB_TRANSFORMATIONS -> {
                         if (type instanceof TransformationAbilityType) {
@@ -239,6 +238,61 @@ public class AbilityInventoryScreen extends Screen {
             return !java.util.Objects.equals(activeKey, thisKey);
         }
         return false;
+    }
+
+    /**
+     * Returns true if the given ability is locked (not yet unlocked).
+     * Locked abilities appear in the grid but cannot be picked up.
+     */
+    private boolean isAbilityLocked(AbilityType type) {
+        return !data.isAbilityUnlocked(type);
+    }
+
+    /**
+     * Gets the progress text for a locked ability, if available.
+     * Returns the condition's progress description from the player's
+     * tracked progress data.
+     */
+    @Nullable
+    private Component getLockedProgressText(AbilityType type) {
+        if (selectedPowerTab < 0 || selectedPowerTab >= powers.size()) return null;
+        Power power = powers.get(selectedPowerTab);
+        Power.PowerAbilityEntry entry = power.getEntry(type);
+        if (entry == null || entry.getUnlockCondition() == null) return null;
+
+        ResourceLocation powerKey = SomniumRegistries.getPowerKey(power);
+        if (powerKey == null) return null;
+
+        String progressKey = net.eclipce.somnium.core.unlock.ProgressionHandler
+                .makeProgressKey(powerKey, type);
+        if (progressKey == null) return null;
+
+        net.minecraft.nbt.CompoundTag progress = data.getUnlockProgress(progressKey);
+        if (progress == null) return null;
+
+        return entry.getUnlockCondition().getProgressText(progress);
+    }
+
+    /**
+     * Gets the progress fraction (0.0-1.0) for a locked ability.
+     */
+    private float getLockedProgressFraction(AbilityType type) {
+        if (selectedPowerTab < 0 || selectedPowerTab >= powers.size()) return 0f;
+        Power power = powers.get(selectedPowerTab);
+        Power.PowerAbilityEntry entry = power.getEntry(type);
+        if (entry == null || entry.getUnlockCondition() == null) return 0f;
+
+        ResourceLocation powerKey = SomniumRegistries.getPowerKey(power);
+        if (powerKey == null) return 0f;
+
+        String progressKey = net.eclipce.somnium.core.unlock.ProgressionHandler
+                .makeProgressKey(powerKey, type);
+        if (progressKey == null) return 0f;
+
+        net.minecraft.nbt.CompoundTag progress = data.getUnlockProgress(progressKey);
+        if (progress == null) return 0f;
+
+        return entry.getUnlockCondition().getProgressFraction(progress);
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -363,11 +417,13 @@ public class AbilityInventoryScreen extends Screen {
                 int iconX = leftPos + GRID_REL_X + CELL_ICON_OFFSET + col * CELL_PITCH;
                 int iconY = topPos + GRID_REL_Y + CELL_ICON_OFFSET + row * CELL_PITCH;
                 boolean grayed = isAbilityGrayed(type);
+                boolean locked = isAbilityLocked(type);
+                boolean dimmed = grayed || locked;
 
                 // Render ability icon
                 if (type.getIcon() != null) {
                     RenderSystem.enableBlend();
-                    if (grayed) {
+                    if (dimmed) {
                         RenderSystem.setShaderColor(0.4f, 0.4f, 0.4f, 0.7f);
                     }
                     graphics.blit(type.getIcon(), iconX, iconY,
@@ -375,35 +431,59 @@ public class AbilityInventoryScreen extends Screen {
                     RenderSystem.setShaderColor(1f, 1f, 1f, 1f);
                     RenderSystem.disableBlend();
                 } else {
-                    int color = grayed ? 0xFF333333 : 0xFF555555;
+                    int color = dimmed ? 0xFF333333 : 0xFF555555;
                     graphics.fill(iconX + 2, iconY + 2,
                             iconX + CELL_CONTENT - 2, iconY + CELL_CONTENT - 2,
                             color);
                 }
 
-                // Cooldown sweep overlay
-                AbilityInstance instance = data.getAbilityInstance(type);
-                if (instance != null && instance.isOnCooldown()) {
-                    float progress = instance.getCooldownProgress();
-                    // Render a partial overlay from top, shrinking as cooldown progresses
-                    int overlayHeight = Math.round(CELL_CONTENT * (1.0f - progress));
-                    if (overlayHeight > 0) {
-                        graphics.fill(iconX, iconY,
-                                iconX + CELL_CONTENT, iconY + overlayHeight,
-                                0x80000000);
+                // Locked ability: progress bar at bottom of icon
+                if (locked) {
+                    float fraction = getLockedProgressFraction(type);
+                    int barWidth = Math.round((CELL_CONTENT - 2) * fraction);
+                    if (barWidth > 0) {
+                        // Background bar (dark)
+                        graphics.fill(iconX + 1, iconY + CELL_CONTENT - 3,
+                                iconX + CELL_CONTENT - 1, iconY + CELL_CONTENT - 1,
+                                0xAA000000);
+                        // Progress fill (green)
+                        graphics.fill(iconX + 1, iconY + CELL_CONTENT - 3,
+                                iconX + 1 + barWidth, iconY + CELL_CONTENT - 1,
+                                0xAA00CC00);
+                    } else {
+                        // No progress yet — show empty bar background
+                        graphics.fill(iconX + 1, iconY + CELL_CONTENT - 3,
+                                iconX + CELL_CONTENT - 1, iconY + CELL_CONTENT - 1,
+                                0xAA000000);
                     }
                 }
 
-                // Duplicate indicator: dim if already on current page's bar
-                ResourceLocation abilityKey = SomniumRegistries.getAbilityKey(type);
-                if (abilityKey != null && data.isAbilityOnPage(selectedPage, abilityKey)) {
-                    graphics.fill(iconX, iconY,
-                            iconX + CELL_CONTENT, iconY + CELL_CONTENT,
-                            0x40FF0000);
+                // Cooldown sweep overlay (only for unlocked abilities)
+                if (!locked) {
+                    AbilityInstance instance = data.getAbilityInstance(type);
+                    if (instance != null && instance.isOnCooldown()) {
+                        float progress = instance.getCooldownProgress();
+                        int overlayHeight = Math.round(CELL_CONTENT * (1.0f - progress));
+                        if (overlayHeight > 0) {
+                            graphics.fill(iconX, iconY,
+                                    iconX + CELL_CONTENT, iconY + overlayHeight,
+                                    0x80000000);
+                        }
+                    }
                 }
 
-                // Hover highlight (only if not carrying an ability)
-                if (heldAbility == null && !grayed
+                // Duplicate indicator: dim if already on current page's bar (unlocked only)
+                if (!locked) {
+                    ResourceLocation abilityKey = SomniumRegistries.getAbilityKey(type);
+                    if (abilityKey != null && data.isAbilityOnPage(selectedPage, abilityKey)) {
+                        graphics.fill(iconX, iconY,
+                                iconX + CELL_CONTENT, iconY + CELL_CONTENT,
+                                0x40FF0000);
+                    }
+                }
+
+                // Hover highlight (only if not carrying, not grayed, not locked)
+                if (heldAbility == null && !dimmed
                         && isInBounds(mouseX, mouseY, iconX, iconY, CELL_CONTENT, CELL_CONTENT)) {
                     graphics.fill(iconX, iconY,
                             iconX + CELL_CONTENT, iconY + CELL_CONTENT,
@@ -608,6 +688,17 @@ public class AbilityInventoryScreen extends Screen {
         Component desc = type.getDescription();
         if (desc != null) tooltip.add(desc);
 
+        // Locked indicator with progress
+        if (isAbilityLocked(type)) {
+            tooltip.add(Component.literal("Locked")
+                    .withStyle(ChatFormatting.RED));
+            Component progressText = getLockedProgressText(type);
+            if (progressText != null) {
+                tooltip.add(progressText.copy().withStyle(ChatFormatting.GRAY));
+            }
+            return tooltip; // Don't show cooldown/duplicate info for locked abilities
+        }
+
         // Cooldown info
         AbilityInstance instance = data.getAbilityInstance(type);
         if (instance != null && instance.isOnCooldown()) {
@@ -764,6 +855,9 @@ public class AbilityInventoryScreen extends Screen {
 
                 // Pick up ability from grid
                 AbilityType type = currentAbilities.get(index);
+
+                // Can't pick up locked abilities
+                if (isAbilityLocked(type)) return true;
 
                 // Can't pick up grayed transformations
                 if (isAbilityGrayed(type)) return true;

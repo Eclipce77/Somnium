@@ -6,6 +6,7 @@ import net.eclipce.somnium.core.ability.AbilityType;
 import net.eclipce.somnium.core.ability.ActivationType;
 import net.eclipce.somnium.core.data.SomniumCapability;
 import net.eclipce.somnium.core.data.SomniumPlayerData;
+import net.eclipce.somnium.core.unlock.ProgressionHandler;
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraftforge.network.NetworkEvent;
@@ -128,6 +129,7 @@ public class ActivateAbilityPacket {
                 if (type.canActivate(ctx)) {
                     type.onActivate(ctx);
                     type.applyCosts(ctx);
+                    ProgressionHandler.onAbilityActivated(ctx.getPlayer(), type);
                 }
             }
             case TOGGLE -> {
@@ -141,6 +143,7 @@ public class ActivateAbilityPacket {
                         type.onActivate(ctx);
                         type.applyCosts(ctx);
                         instance.setActive(true);
+                        ProgressionHandler.onAbilityActivated(ctx.getPlayer(), type);
                     }
                 }
             }
@@ -149,6 +152,7 @@ public class ActivateAbilityPacket {
                     type.onKeyDown(ctx);
                     instance.setActive(true);
                     instance.resetChargeTicks();
+                    ProgressionHandler.onAbilityActivated(ctx.getPlayer(), type);
                 }
             }
             case CHARGED -> {
@@ -156,6 +160,7 @@ public class ActivateAbilityPacket {
                     type.onChargeStart(ctx);
                     instance.setActive(true);
                     instance.resetChargeTicks();
+                    ProgressionHandler.onAbilityActivated(ctx.getPlayer(), type);
                 }
             }
             case PASSIVE -> {

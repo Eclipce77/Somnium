@@ -2,6 +2,8 @@ package net.eclipce.somnium.core.power;
 
 import net.eclipce.somnium.core.ability.AbilityType;
 import net.eclipce.somnium.core.ability.ActivationType;
+import net.eclipce.somnium.core.unlock.UnlockCondition;
+import net.eclipce.somnium.core.unlock.conditions.AlwaysUnlocked;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceLocation;
 
@@ -19,16 +21,12 @@ import java.util.function.Supplier;
  * multiple powers simultaneously. An {@link AbilityType} can belong to multiple
  * powers without conflict.</p>
  *
- * <h3>Passive default overrides</h3>
- * <p>When an ability is {@link ActivationType#PASSIVE}, each power can override
- * whether it starts enabled or disabled via
- * {@link Builder#ability(Supplier, Boolean)}. This allows the same passive
- * ability to default to ON in one power but OFF in another.</p>
- *
- * <h3>Progression (Layer 8)</h3>
- * <p>The {@link PowerAbilityEntry} class is designed to be extended with unlock
- * conditions when the progression system is implemented. For now, all abilities
- * in a power are available immediately when the power is granted.</p>
+ * <h3>Progression</h3>
+ * <p>Each ability within a power can have an {@link UnlockCondition} that defines
+ * when it becomes available. Abilities without a condition (or with
+ * {@link AlwaysUnlocked}) are available immediately when the power is granted.
+ * Progression can be disabled per-power via {@link Builder#progressionEnabled(boolean)},
+ * in which case all abilities unlock immediately regardless of conditions.</p>
  *
  * <h3>Usage for addon developers</h3>
  * <pre>{@code
@@ -36,8 +34,9 @@ import java.util.function.Supplier;
  *     () -> Power.builder()
  *         .displayName(Component.translatable("power.mymod.pyromancy"))
  *         .icon(new ResourceLocation("mymod", "textures/power/pyromancy.png"))
- *         .ability(() -> ModAbilities.FIRE_PUNCH.get())
- *         .ability(() -> ModAbilities.FIRE_BLAST.get())
+ *         .ability(() -> ModAbilities.FIRE_PUNCH.get())  // AlwaysUnlocked
+ *         .ability(() -> ModAbilities.FIRE_BLAST.get(),
+ *                  new AbilityUsageCondition(() -> ModAbilities.FIRE_PUNCH.get(), 50))
  *         .ability(() -> ModAbilities.FIRE_RESISTANCE.get(), true)  // passive, starts ON
  *         .build()
  * );
@@ -45,6 +44,7 @@ import java.util.function.Supplier;
  *
  * @see AbilityType
  * @see PowerAbilityEntry
+ * @see UnlockCondition
  */
 public class Power {
 
@@ -223,32 +223,53 @@ public class Power {
         }
 
         /**
-         * Adds an ability to this power with no passive default override.
-         * The ability's own {@link AbilityType#isDefaultEnabled()} will be used
-         * for passive abilities.
+         * Adds an ability with {@link AlwaysUnlocked} and no passive override.
+         * The ability is available immediately when the power is granted.
          *
-         * @param abilitySupplier a supplier for the ability type (use a supplier to
-         *                        avoid registry ordering issues during mod loading)
+         * @param abilitySupplier a supplier for the ability type
          */
         public Builder ability(Supplier<AbilityType> abilitySupplier) {
-            entries.add(new PowerAbilityEntry(abilitySupplier, null));
+            entries.add(new PowerAbilityEntry(abilitySupplier, null, null));
             return this;
         }
 
         /**
-         * Adds an ability to this power with a passive default override.
-         * This allows a power to control whether a passive ability starts
-         * enabled or disabled, overriding the ability's own default.
-         *
-         * <p>For non-passive abilities, the override is stored but ignored.</p>
+         * Adds an ability with a passive default override and no unlock condition.
+         * The ability is available immediately when the power is granted.
          *
          * @param abilitySupplier       a supplier for the ability type
-         * @param defaultEnabledOverride {@code true} to start enabled, {@code false}
-         *                               to start disabled, overriding the ability's default
+         * @param defaultEnabledOverride passive default override
          */
         public Builder ability(Supplier<AbilityType> abilitySupplier,
                                @Nullable Boolean defaultEnabledOverride) {
-            entries.add(new PowerAbilityEntry(abilitySupplier, defaultEnabledOverride));
+            entries.add(new PowerAbilityEntry(abilitySupplier, defaultEnabledOverride, null));
+            return this;
+        }
+
+        /**
+         * Adds an ability with an unlock condition.
+         * The ability is locked until the condition is met.
+         *
+         * @param abilitySupplier a supplier for the ability type
+         * @param condition       the unlock condition
+         */
+        public Builder ability(Supplier<AbilityType> abilitySupplier,
+                               UnlockCondition condition) {
+            entries.add(new PowerAbilityEntry(abilitySupplier, null, condition));
+            return this;
+        }
+
+        /**
+         * Adds an ability with both an unlock condition and a passive default override.
+         *
+         * @param abilitySupplier       a supplier for the ability type
+         * @param condition             the unlock condition
+         * @param defaultEnabledOverride passive default override
+         */
+        public Builder ability(Supplier<AbilityType> abilitySupplier,
+                               UnlockCondition condition,
+                               @Nullable Boolean defaultEnabledOverride) {
+            entries.add(new PowerAbilityEntry(abilitySupplier, defaultEnabledOverride, condition));
             return this;
         }
 
@@ -272,11 +293,8 @@ public class Power {
 
     /**
      * Represents a single ability's entry within a {@link Power}, holding
-     * per-power metadata for that ability.
-     *
-     * <p>Currently holds the passive default override. When the progression
-     * system is implemented (Layer 8), this class will be extended to include
-     * the {@code UnlockCondition} for this ability within this power.</p>
+     * per-power metadata for that ability: unlock condition and passive
+     * default override.
      *
      * <p>The ability is stored as a {@link Supplier} to avoid registry
      * ordering issues during mod loading — the supplier is resolved lazily
@@ -286,8 +304,8 @@ public class Power {
 
         private final Supplier<AbilityType> abilitySupplier;
         private final Boolean defaultEnabledOverride;
-
-        // Future (Layer 8): private UnlockCondition unlockCondition;
+        @Nullable
+        private final UnlockCondition unlockCondition;
 
         /**
          * Creates a new entry.
@@ -295,11 +313,15 @@ public class Power {
          * @param abilitySupplier       supplier for the ability type
          * @param defaultEnabledOverride passive default override, or {@code null}
          *                               to use the ability's own default
+         * @param unlockCondition        the condition to unlock this ability,
+         *                               or {@code null} for immediate unlock
          */
         public PowerAbilityEntry(Supplier<AbilityType> abilitySupplier,
-                                 @Nullable Boolean defaultEnabledOverride) {
+                                 @Nullable Boolean defaultEnabledOverride,
+                                 @Nullable UnlockCondition unlockCondition) {
             this.abilitySupplier = abilitySupplier;
             this.defaultEnabledOverride = defaultEnabledOverride;
+            this.unlockCondition = unlockCondition;
         }
 
         /**
@@ -334,6 +356,24 @@ public class Power {
         @Nullable
         public Boolean getDefaultEnabledOverride() {
             return defaultEnabledOverride;
+        }
+
+        /**
+         * @return the unlock condition for this ability within this power,
+         *         or {@code null} if the ability unlocks immediately
+         */
+        @Nullable
+        public UnlockCondition getUnlockCondition() {
+            return unlockCondition;
+        }
+
+        /**
+         * @return {@code true} if this ability has a non-trivial unlock condition
+         *         (i.e., not null and not AlwaysUnlocked)
+         */
+        public boolean hasProgressionCondition() {
+            return unlockCondition != null
+                    && !(unlockCondition instanceof AlwaysUnlocked);
         }
     }
 }

@@ -251,8 +251,28 @@ public class AbilityType {
      * @return the display name component
      */
     public Component getDisplayName() {
-        // Will use registry name for translation key once registry is built:
-        // "ability." + registryName.getNamespace() + "." + registryName.getPath()
+        // Use registry-based translation key: "ability.modid.abilityname"
+        ResourceLocation key = net.eclipce.somnium.core.registry.SomniumRegistries.getAbilityKey(this);
+        if (key != null) {
+            String translationKey = "ability." + key.getNamespace() + "." + key.getPath();
+            Component translated = Component.translatable(translationKey);
+            // If translation resolves to itself (key not in lang file), use a formatted fallback
+            if (translated.getString().equals(translationKey)) {
+                // Convert "fire_blast" → "Fire Blast"
+                String path = key.getPath();
+                String[] words = path.split("_");
+                StringBuilder name = new StringBuilder();
+                for (String word : words) {
+                    if (!name.isEmpty()) name.append(" ");
+                    if (!word.isEmpty()) {
+                        name.append(Character.toUpperCase(word.charAt(0)));
+                        if (word.length() > 1) name.append(word.substring(1));
+                    }
+                }
+                return Component.literal(name.toString());
+            }
+            return translated;
+        }
         return Component.literal("Unnamed Ability");
     }
 

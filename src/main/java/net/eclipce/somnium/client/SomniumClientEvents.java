@@ -131,6 +131,8 @@ public class SomniumClientEvents {
                     int nextPage = (localData.getActivePage() + 1) % SomniumPlayerData.MAX_PAGES;
                     localData.setActivePage(nextPage);
                     AbilityBarOverlay.cyclePage();
+                    SomniumNetwork.sendToServer(
+                            new net.eclipce.somnium.network.SetActivePagePacket(nextPage));
                 }
             }
 

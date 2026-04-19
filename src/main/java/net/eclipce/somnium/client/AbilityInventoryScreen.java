@@ -98,7 +98,7 @@ public class AbilityInventoryScreen extends Screen {
 
     // Ability bar slots (built into background texture)
     private static final int BAR_REL_X = 131;
-    private static final int[] BAR_SLOT_REL_Y = {28, 47, 66, 85, 104, 123};
+    private static final int[] BAR_SLOT_REL_Y = {27, 46, 65, 84, 103, 122};
     private static final int ICON_SIZE = 16;
 
     // Left power tabs
@@ -667,12 +667,29 @@ public class AbilityInventoryScreen extends Screen {
                 AbilityInstance instance = data.getBarSlotInstance(selectedPage, slot);
                 if (instance != null) {
                     List<Component> tooltip = buildAbilityTooltip(instance.getAbilityType());
-                    tooltip.add(Component.translatable("tooltip." + Somnium.MOD_ID + ".click_to_remove")
+                    tooltip.add(Component.literal("Click to remove from bar")
                             .withStyle(ChatFormatting.GRAY));
                     graphics.renderTooltip(font, tooltip, Optional.empty(),
                             mouseX, mouseY);
                 }
                 return;
+            }
+        }
+
+        // Power tab tooltips
+        if (!powers.isEmpty()) {
+            int visibleCount = Math.min(powers.size() - tabScrollOffset, MAX_VISIBLE_TABS);
+            for (int i = 0; i < visibleCount; i++) {
+                int tabX = leftPos + LEFT_TAB_REL_X;
+                int tabY = topPos + LEFT_TAB_START_REL_Y + i * LEFT_TAB_SPACING;
+                if (isInBounds(mouseX, mouseY, tabX, tabY, LEFT_TAB_W, LEFT_TAB_H)) {
+                    Power power = powers.get(i + tabScrollOffset);
+                    List<Component> tooltip = new ArrayList<>();
+                    tooltip.add(power.getDisplayName());
+                    graphics.renderTooltip(font, tooltip, Optional.empty(),
+                            mouseX, mouseY);
+                    return;
+                }
             }
         }
     }
@@ -832,9 +849,6 @@ public class AbilityInventoryScreen extends Screen {
      * - Held ability → drop back (cancel, since grid is creative-mode)
      */
     private boolean handleGridClick(int mx, int my) {
-        // Passives tab: no drag-and-drop (future: toggle on/off)
-        if (selectedTypeTab == TAB_PASSIVES) return false;
-
         int startIndex = gridScrollRow * GRID_COLS;
         for (int row = 0; row < GRID_ROWS; row++) {
             for (int col = 0; col < GRID_COLS; col++) {
@@ -845,6 +859,19 @@ public class AbilityInventoryScreen extends Screen {
                 int iconY = topPos + GRID_REL_Y + CELL_ICON_OFFSET + row * CELL_PITCH;
 
                 if (!isInBounds(mx, my, iconX, iconY, CELL_CONTENT, CELL_CONTENT)) continue;
+
+                // Passives tab: toggle on/off instead of drag-and-drop
+                if (selectedTypeTab == TAB_PASSIVES) {
+                    AbilityType type = currentAbilities.get(index);
+                    if (isAbilityLocked(type)) return true;
+
+                    ResourceLocation abilityKey = SomniumRegistries.getAbilityKey(type);
+                    if (abilityKey != null) {
+                        SomniumNetwork.sendToServer(
+                                new net.eclipce.somnium.network.TogglePassivePacket(abilityKey));
+                    }
+                    return true;
+                }
 
                 if (heldAbility != null) {
                     // Clicking grid with held ability → just drop it (returns to pool)
@@ -936,6 +963,9 @@ public class AbilityInventoryScreen extends Screen {
             int by = topPos + PAGE_BACK_REL_Y;
             if (isInBounds(mx, my, bx, by, PAGE_ARROW_W, PAGE_ARROW_H)) {
                 selectedPage--;
+                data.setActivePage(selectedPage);
+                SomniumNetwork.sendToServer(
+                        new net.eclipce.somnium.network.SetActivePagePacket(selectedPage));
                 return true;
             }
         }
@@ -944,6 +974,9 @@ public class AbilityInventoryScreen extends Screen {
             int fy = topPos + PAGE_FWD_REL_Y;
             if (isInBounds(mx, my, fx, fy, PAGE_ARROW_W, PAGE_ARROW_H)) {
                 selectedPage++;
+                data.setActivePage(selectedPage);
+                SomniumNetwork.sendToServer(
+                        new net.eclipce.somnium.network.SetActivePagePacket(selectedPage));
                 return true;
             }
         }

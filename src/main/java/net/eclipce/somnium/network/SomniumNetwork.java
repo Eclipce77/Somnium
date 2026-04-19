@@ -105,6 +105,12 @@ public final class SomniumNetwork {
                 .consumerMainThread(RequestSyncPacket::handle)
                 .add();
 
+        CHANNEL.messageBuilder(SetActivePagePacket.class, packetId++, NetworkDirection.PLAY_TO_SERVER)
+                .encoder(SetActivePagePacket::encode)
+                .decoder(SetActivePagePacket::decode)
+                .consumerMainThread(SetActivePagePacket::handle)
+                .add();
+
         Somnium.LOGGER.debug("Somnium network channel initialized with {} packet types", packetId);
     }
 

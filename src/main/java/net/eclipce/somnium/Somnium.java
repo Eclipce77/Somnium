@@ -6,6 +6,7 @@ import net.eclipce.somnium.command.SomniumCommand;
 import net.eclipce.somnium.core.data.SomniumPlayerData;
 import net.eclipce.somnium.core.registry.SomniumRegistries;
 import net.eclipce.somnium.network.SomniumNetwork;
+import net.eclipce.somnium.test.TestContent;
 import net.minecraft.client.Minecraft;
 import net.minecraftforge.api.distmarker.Dist;
 import net.minecraftforge.common.MinecraftForge;
@@ -55,6 +56,8 @@ public class Somnium {
         MinecraftForge.EVENT_BUS.addListener(
                 (net.minecraftforge.event.RegisterCommandsEvent event) ->
                         SomniumCommand.register(event.getDispatcher()));
+
+        TestContent.init(modEventBus);
 
         LOGGER.info("Somnium API initialized");
 

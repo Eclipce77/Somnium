@@ -278,11 +278,24 @@ public class AbilityType {
 
     /**
      * Returns the description of this ability, shown as a tooltip in the
-     * ability inventory. Override to provide a custom description.
+     * ability inventory. Default implementation uses the translation key
+     * {@code "ability.modid.abilityname.desc"}. If the key is not defined
+     * in the lang file, returns {@code null} (no description shown).
+     *
+     * <p>Override to provide a custom description programmatically.</p>
      *
      * @return the description component, or {@code null} for no description
      */
     public Component getDescription() {
+        ResourceLocation key = net.eclipce.somnium.core.registry.SomniumRegistries.getAbilityKey(this);
+        if (key != null) {
+            String descKey = "ability." + key.getNamespace() + "." + key.getPath() + ".desc";
+            Component translated = Component.translatable(descKey);
+            // If the translation resolves to the raw key, no description is defined
+            if (!translated.getString().equals(descKey)) {
+                return translated;
+            }
+        }
         return null;
     }
 

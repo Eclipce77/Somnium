@@ -2,6 +2,7 @@ package net.eclipce.somnium.client;
 
 import net.eclipce.somnium.Somnium;
 import net.eclipce.somnium.client.keybind.SomniumKeybinds;
+import net.eclipce.somnium.core.ability.AbilityInstance;
 import net.eclipce.somnium.core.data.SomniumPlayerData;
 import net.eclipce.somnium.network.ActivateAbilityPacket;
 import net.eclipce.somnium.network.SomniumNetwork;
@@ -104,7 +105,20 @@ public class SomniumClientEvents {
             if (event.phase != TickEvent.Phase.END) return;
 
             Minecraft mc = Minecraft.getInstance();
-            if (mc.player == null || mc.screen != null) return;
+            if (mc.player == null) return;
+
+            // Tick client-side cooldowns for smooth display (runs even with screen open)
+            SomniumPlayerData localData = ClientAbilityData.getLocalData();
+            if (localData != null) {
+                for (AbilityInstance instance : localData.getAbilityInventory().values()) {
+                    if (instance.isOnCooldown()) {
+                        instance.tickCooldown();
+                    }
+                }
+            }
+
+            // Don't process keybinds when a screen is open
+            if (mc.screen != null) return;
 
             // Process ability slot keys — detect press/release transitions
             for (int slot = 0; slot < SomniumPlayerData.BAR_SIZE; slot++) {
@@ -126,18 +140,15 @@ public class SomniumClientEvents {
 
             // Process utility keys
             if (SomniumKeybinds.PAGE_TOGGLE.consumeClick()) {
-                SomniumPlayerData localData = ClientAbilityData.getLocalData();
                 if (localData != null) {
                     int nextPage = (localData.getActivePage() + 1) % SomniumPlayerData.MAX_PAGES;
                     localData.setActivePage(nextPage);
-                    AbilityBarOverlay.cyclePage();
                     SomniumNetwork.sendToServer(
                             new net.eclipce.somnium.network.SetActivePagePacket(nextPage));
                 }
             }
 
             if (SomniumKeybinds.ABILITY_INVENTORY.consumeClick()) {
-                SomniumPlayerData localData = ClientAbilityData.getLocalData();
                 if (localData != null) {
                     mc.setScreen(new AbilityInventoryScreen(localData));
                 }

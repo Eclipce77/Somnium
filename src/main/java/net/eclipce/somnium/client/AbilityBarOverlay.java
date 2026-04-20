@@ -2,6 +2,7 @@ package net.eclipce.somnium.client;
 
 import com.mojang.blaze3d.systems.RenderSystem;
 import net.eclipce.somnium.Somnium;
+import net.eclipce.somnium.client.ClientAbilityData;
 import net.eclipce.somnium.client.config.BarPosition;
 import net.eclipce.somnium.client.config.SomniumClientConfig;
 import net.eclipce.somnium.client.keybind.SomniumKeybinds;
@@ -42,9 +43,17 @@ public class AbilityBarOverlay implements IGuiOverlay {
     private static final ResourceLocation BAR_TEXTURE =
             new ResourceLocation(Somnium.MOD_ID, "textures/gui/bar/ability_bar.png");
 
-    /** Texture for multi-page bar (with page arrows). */
-    private static final ResourceLocation BAR_TEXTURE_PAGED =
-            new ResourceLocation(Somnium.MOD_ID, "textures/gui/bar/ability_bar_paged.png");
+    /** Texture for multi-page bar — only left arrow highlighted (can go back). */
+    private static final ResourceLocation BAR_TEXTURE_PAGED_LEFT =
+            new ResourceLocation(Somnium.MOD_ID, "textures/gui/bar/ability_bar_paged_left.png");
+
+    /** Texture for multi-page bar — only right arrow highlighted (can go forward). */
+    private static final ResourceLocation BAR_TEXTURE_PAGED_RIGHT =
+            new ResourceLocation(Somnium.MOD_ID, "textures/gui/bar/ability_bar_paged_right.png");
+
+    /** Texture for multi-page bar — both arrows highlighted (can go either way). */
+    private static final ResourceLocation BAR_TEXTURE_PAGED_BOTH =
+            new ResourceLocation(Somnium.MOD_ID, "textures/gui/bar/ability_bar_paged_both.png");
 
     /** Width of both bar textures. */
     private static final int TEX_WIDTH = 26;
@@ -128,7 +137,21 @@ public class AbilityBarOverlay implements IGuiOverlay {
         // Determine if we should show the paged texture
         boolean paged = isPaged();
         int visibleHeight = paged ? VISIBLE_HEIGHT_PAGED : VISIBLE_HEIGHT_NORMAL;
-        ResourceLocation texture = paged ? BAR_TEXTURE_PAGED : BAR_TEXTURE;
+        ResourceLocation texture;
+        if (paged) {
+            int currentPage = data.getActivePage();
+            boolean canGoBack = currentPage > 0;
+            boolean canGoForward = currentPage < SomniumPlayerData.MAX_PAGES - 1;
+            if (canGoBack && canGoForward) {
+                texture = BAR_TEXTURE_PAGED_BOTH;
+            } else if (canGoBack) {
+                texture = BAR_TEXTURE_PAGED_LEFT;
+            } else {
+                texture = BAR_TEXTURE_PAGED_RIGHT;
+            }
+        } else {
+            texture = BAR_TEXTURE;
+        }
 
         // Get config values
         BarPosition position = SomniumClientConfig.getBarPosition();
@@ -240,9 +263,9 @@ public class AbilityBarOverlay implements IGuiOverlay {
             float progress = instance.getCooldownProgress();
             int cooldownHeight = (int) (ICON_SIZE * (1.0f - progress));
             if (cooldownHeight > 0) {
-                // Semi-transparent white overlay from top down
-                graphics.fill(iconX, iconY, iconX + ICON_SIZE,
-                        iconY + cooldownHeight, 0x80FFFFFF);
+                // Overlay anchored to bottom, shrinks downward as cooldown completes
+                graphics.fill(iconX, iconY + ICON_SIZE - cooldownHeight,
+                        iconX + ICON_SIZE, iconY + ICON_SIZE, 0x80FFFFFF);
             }
         }
 

@@ -60,6 +60,9 @@ public class SomniumPlayerData {
     /** Maximum number of ability bar pages. */
     public static final int MAX_PAGES = 3;
 
+    /** Number of slots on the transformation bar. */
+    public static final int TRANS_BAR_SIZE = 6;
+
     // ═══════════════════════════════════════════════════════════════════
     //  NBT keys
     // ═══════════════════════════════════════════════════════════════════
@@ -79,6 +82,8 @@ public class SomniumPlayerData {
     private static final String TAG_UNLOCK_PROGRESS = "UnlockProgress";
     private static final String TAG_PROGRESS_KEY = "Key";
     private static final String TAG_PROGRESS_DATA = "Data";
+    private static final String TAG_TRANS_BAR = "TransformationBar";
+    private static final String TAG_MOST_RECENT_TRANS = "MostRecentTransformation";
 
     // ═══════════════════════════════════════════════════════════════════
     //  Fields
@@ -128,6 +133,19 @@ public class SomniumPlayerData {
      */
     @Nullable
     private ResourceLocation activeTransformation = null;
+
+    /**
+     * The transformation bar — TRANS_BAR_SIZE slots, no pages.
+     * Holds transformation abilities separately from the main ability bar.
+     */
+    private final ResourceLocation[] transformationBar = new ResourceLocation[TRANS_BAR_SIZE];
+
+    /**
+     * The most recently activated transformation's registry key.
+     * Used for the crouch quick-bind to re-activate without opening the UI.
+     */
+    @Nullable
+    private ResourceLocation mostRecentTransformation = null;
 
     /**
      * Per-ability-per-power progression data. Keys are composite strings
@@ -582,6 +600,79 @@ public class SomniumPlayerData {
     }
 
     // ═══════════════════════════════════════════════════════════════════
+    //  Transformation bar management
+    // ═══════════════════════════════════════════════════════════════════
+
+    /**
+     * Equips a transformation to a transformation bar slot.
+     *
+     * @param slot        the slot index (0 to TRANS_BAR_SIZE-1)
+     * @param abilityType the transformation to equip, or null to clear
+     * @return {@code true} if the operation succeeded
+     */
+    public boolean setTransBarSlot(int slot, @Nullable AbilityType abilityType) {
+        if (slot < 0 || slot >= TRANS_BAR_SIZE) return false;
+
+        if (abilityType == null) {
+            transformationBar[slot] = null;
+            markDirty();
+            return true;
+        }
+
+        ResourceLocation key = SomniumRegistries.getAbilityKey(abilityType);
+        if (key == null || !unlockedAbilities.contains(key)) return false;
+
+        transformationBar[slot] = key;
+        markDirty();
+        return true;
+    }
+
+    /**
+     * Gets the AbilityInstance in a transformation bar slot.
+     */
+    @Nullable
+    public AbilityInstance getTransBarSlotInstance(int slot) {
+        if (slot < 0 || slot >= TRANS_BAR_SIZE) return null;
+        ResourceLocation key = transformationBar[slot];
+        return key != null ? abilityInventory.get(key) : null;
+    }
+
+    /**
+     * Gets the ability key in a transformation bar slot.
+     */
+    @Nullable
+    public ResourceLocation getTransBarSlotKey(int slot) {
+        if (slot < 0 || slot >= TRANS_BAR_SIZE) return null;
+        return transformationBar[slot];
+    }
+
+    /**
+     * Checks if a transformation is on any transformation bar slot.
+     */
+    public boolean isAbilityOnTransBar(@Nullable ResourceLocation key) {
+        if (key == null) return false;
+        for (int i = 0; i < TRANS_BAR_SIZE; i++) {
+            if (key.equals(transformationBar[i])) return true;
+        }
+        return false;
+    }
+
+    /** @return the most recently activated transformation key, or null */
+    @Nullable
+    public ResourceLocation getMostRecentTransformation() {
+        return mostRecentTransformation;
+    }
+
+    /**
+     * Sets the most recently activated transformation. Called when a
+     * transformation is successfully activated.
+     */
+    public void setMostRecentTransformation(@Nullable ResourceLocation key) {
+        this.mostRecentTransformation = key;
+        markDirty();
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
     //  Unlock progress tracking
     // ═══════════════════════════════════════════════════════════════════
 
@@ -745,6 +836,9 @@ public class SomniumPlayerData {
 
         this.activeTransformation = source.activeTransformation;
 
+        System.arraycopy(source.transformationBar, 0, this.transformationBar, 0, TRANS_BAR_SIZE);
+        this.mostRecentTransformation = source.mostRecentTransformation;
+
         this.unlockProgress.clear();
         for (Map.Entry<String, CompoundTag> entry : source.unlockProgress.entrySet()) {
             this.unlockProgress.put(entry.getKey(), entry.getValue().copy());
@@ -835,6 +929,23 @@ public class SomniumPlayerData {
         // Active transformation
         if (activeTransformation != null) {
             root.putString(TAG_ACTIVE_TRANSFORMATION, activeTransformation.toString());
+        }
+
+        // Transformation bar — list of {Slot, AbilityId} entries
+        ListTag transBarTag = new ListTag();
+        for (int slot = 0; slot < TRANS_BAR_SIZE; slot++) {
+            if (transformationBar[slot] != null) {
+                CompoundTag slotTag = new CompoundTag();
+                slotTag.putInt(TAG_BAR_SLOT, slot);
+                slotTag.putString(TAG_BAR_ABILITY_ID, transformationBar[slot].toString());
+                transBarTag.add(slotTag);
+            }
+        }
+        root.put(TAG_TRANS_BAR, transBarTag);
+
+        // Most recent transformation
+        if (mostRecentTransformation != null) {
+            root.putString(TAG_MOST_RECENT_TRANS, mostRecentTransformation.toString());
         }
 
         // Unlock progress — list of {Key, Data} entries
@@ -928,6 +1039,31 @@ public class SomniumPlayerData {
             }
         } else {
             activeTransformation = null;
+        }
+
+        // Transformation bar
+        Arrays.fill(transformationBar, null);
+        if (root.contains(TAG_TRANS_BAR)) {
+            ListTag transBarTag = root.getList(TAG_TRANS_BAR, Tag.TAG_COMPOUND);
+            for (int i = 0; i < transBarTag.size(); i++) {
+                CompoundTag slotTag = transBarTag.getCompound(i);
+                int slot = slotTag.getInt(TAG_BAR_SLOT);
+                if (slot >= 0 && slot < TRANS_BAR_SIZE) {
+                    ResourceLocation abilityKey = new ResourceLocation(
+                            slotTag.getString(TAG_BAR_ABILITY_ID));
+                    if (abilityInventory.containsKey(abilityKey)) {
+                        transformationBar[slot] = abilityKey;
+                    }
+                }
+            }
+        }
+
+        // Most recent transformation
+        if (root.contains(TAG_MOST_RECENT_TRANS)) {
+            mostRecentTransformation = new ResourceLocation(
+                    root.getString(TAG_MOST_RECENT_TRANS));
+        } else {
+            mostRecentTransformation = null;
         }
 
         // Unlock progress

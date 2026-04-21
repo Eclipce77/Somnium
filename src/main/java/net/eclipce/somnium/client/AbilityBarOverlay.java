@@ -86,6 +86,31 @@ public class AbilityBarOverlay implements IGuiOverlay {
     private static final int KEYBIND_LABEL_GAP = 2;
 
     // ═══════════════════════════════════════════════════════════════════
+    //  Transformation bar toggle
+    // ═══════════════════════════════════════════════════════════════════
+
+    /**
+     * Whether the transformation bar is currently visible instead of
+     * the ability bar. Toggled by the transformation keybind.
+     */
+    private static boolean showTransformationBar = false;
+
+    /** @return true if the transformation bar is currently displayed */
+    public static boolean isShowingTransformationBar() {
+        return showTransformationBar;
+    }
+
+    /** Toggles transformation bar visibility on/off. */
+    public static void toggleTransformationBar() {
+        showTransformationBar = !showTransformationBar;
+    }
+
+    /** Hides the transformation bar (e.g., after a transformation activates). */
+    public static void hideTransformationBar() {
+        showTransformationBar = false;
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
     //  Page tracking
     // ═══════════════════════════════════════════════════════════════════
 
@@ -135,7 +160,8 @@ public class AbilityBarOverlay implements IGuiOverlay {
         if (data == null) return;
 
         // Determine if we should show the paged texture
-        boolean paged = isPaged();
+        // Transformation bar never shows page arrows
+        boolean paged = !showTransformationBar && isPaged();
         int visibleHeight = paged ? VISIBLE_HEIGHT_PAGED : VISIBLE_HEIGHT_NORMAL;
         ResourceLocation texture;
         if (paged) {
@@ -186,7 +212,9 @@ public class AbilityBarOverlay implements IGuiOverlay {
         graphics.blit(texture, barX, barY, 0, 0, TEX_WIDTH, TEX_HEIGHT, TEX_WIDTH, TEX_HEIGHT);
 
         // Render ability icons and cooldown overlays in each slot
-        for (int slot = 0; slot < SomniumPlayerData.BAR_SIZE; slot++) {
+        int slotCount = showTransformationBar
+                ? SomniumPlayerData.TRANS_BAR_SIZE : SomniumPlayerData.BAR_SIZE;
+        for (int slot = 0; slot < slotCount; slot++) {
             int iconX = barX + SLOT_ICON_X;
             int iconY = barY + SLOT_ICON_Y[slot];
 
@@ -217,7 +245,9 @@ public class AbilityBarOverlay implements IGuiOverlay {
         graphics.blit(texture, barX, barY, 0, 0, TEX_WIDTH, TEX_HEIGHT, TEX_WIDTH, TEX_HEIGHT);
 
         // Render ability icons (flipped via PoseStack)
-        for (int slot = 0; slot < SomniumPlayerData.BAR_SIZE; slot++) {
+        int slotCount = showTransformationBar
+                ? SomniumPlayerData.TRANS_BAR_SIZE : SomniumPlayerData.BAR_SIZE;
+        for (int slot = 0; slot < slotCount; slot++) {
             int iconX = barX + SLOT_ICON_X;
             int iconY = barY + SLOT_ICON_Y[slot];
             renderSlotContents(graphics, data, slot, iconX, iconY);
@@ -227,7 +257,7 @@ public class AbilityBarOverlay implements IGuiOverlay {
 
         // Render keybind labels OUTSIDE the flip transform (text stays readable)
         // When flipped, slot visual positions are reversed
-        for (int slot = 0; slot < SomniumPlayerData.BAR_SIZE; slot++) {
+        for (int slot = 0; slot < slotCount; slot++) {
             // Calculate where the slot appears after the flip
             int originalIconY = barY + SLOT_ICON_Y[slot];
             int flippedIconY = (int) (2 * centerY - originalIconY - ICON_SIZE);
@@ -244,7 +274,9 @@ public class AbilityBarOverlay implements IGuiOverlay {
      */
     private void renderSlotContents(GuiGraphics graphics, SomniumPlayerData data,
                                     int slot, int iconX, int iconY) {
-        AbilityInstance instance = data.getBarSlotInstance(slot);
+        AbilityInstance instance = showTransformationBar
+                ? data.getTransBarSlotInstance(slot)
+                : data.getBarSlotInstance(slot);
         if (instance == null) return;
 
         AbilityType type = instance.getAbilityType();

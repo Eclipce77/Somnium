@@ -8,6 +8,7 @@ import net.eclipce.somnium.core.data.SomniumCapability;
 import net.eclipce.somnium.core.data.SomniumPlayerData;
 import net.eclipce.somnium.core.unlock.ProgressionHandler;
 import net.minecraft.network.FriendlyByteBuf;
+import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraftforge.network.NetworkEvent;
 
@@ -58,27 +59,42 @@ public class ActivateAbilityPacket {
 
     private final int slot;
     private final Action action;
+    private final int barType; // 0 = ability bar, 1 = transformation bar
 
     /**
-     * Creates an activation packet.
+     * Creates an activation packet for the ability bar.
      *
      * @param slot   the bar slot index (0-5)
      * @param action whether this is a press or release
      */
     public ActivateAbilityPacket(int slot, Action action) {
+        this(slot, action, 0);
+    }
+
+    /**
+     * Creates an activation packet for a specific bar.
+     *
+     * @param slot    the bar slot index
+     * @param action  whether this is a press or release
+     * @param barType 0 for ability bar, 1 for transformation bar
+     */
+    public ActivateAbilityPacket(int slot, Action action, int barType) {
         this.slot = slot;
         this.action = action;
+        this.barType = barType;
     }
 
     public void encode(FriendlyByteBuf buf) {
         buf.writeVarInt(slot);
         buf.writeVarInt(action.ordinal());
+        buf.writeVarInt(barType);
     }
 
     public static ActivateAbilityPacket decode(FriendlyByteBuf buf) {
         int slot = buf.readVarInt();
         Action action = Action.fromOrdinal(buf.readVarInt());
-        return new ActivateAbilityPacket(slot, action);
+        int barType = buf.readVarInt();
+        return new ActivateAbilityPacket(slot, action, barType);
     }
 
     /**
@@ -91,13 +107,18 @@ public class ActivateAbilityPacket {
             ServerPlayer player = context.getSender();
             if (player == null) return;
 
-            // Validate slot range
-            if (slot < 0 || slot >= SomniumPlayerData.BAR_SIZE) return;
-
             SomniumPlayerData data = SomniumCapability.get(player);
             if (data == null) return;
 
-            AbilityInstance instance = data.getBarSlotInstance(slot);
+            // Route to correct bar
+            AbilityInstance instance;
+            if (barType == 1) {
+                if (slot < 0 || slot >= SomniumPlayerData.TRANS_BAR_SIZE) return;
+                instance = data.getTransBarSlotInstance(slot);
+            } else {
+                if (slot < 0 || slot >= SomniumPlayerData.BAR_SIZE) return;
+                instance = data.getBarSlotInstance(slot);
+            }
             if (instance == null) return;
 
             AbilityType abilityType = instance.getAbilityType();
@@ -110,7 +131,6 @@ public class ActivateAbilityPacket {
                 case RELEASE -> handleRelease(abilityType, activationType, instance, activationCtx);
             }
 
-            // Mark data dirty so it syncs back to the client
             data.markDirty();
             SomniumNetwork.syncToClient(player);
         });
@@ -144,6 +164,11 @@ public class ActivateAbilityPacket {
                         type.applyCosts(ctx);
                         instance.setActive(true);
                         ProgressionHandler.onAbilityActivated(ctx.getPlayer(), type);
+                        // Track most recent transformation
+                        if (type instanceof net.eclipce.somnium.core.ability.transformation.TransformationAbilityType) {
+                            ResourceLocation transKey = net.eclipce.somnium.core.registry.SomniumRegistries.getAbilityKey(type);
+                            data.setMostRecentTransformation(transKey);
+                        }
                     }
                 }
             }

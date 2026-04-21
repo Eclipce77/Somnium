@@ -98,10 +98,10 @@ public class AbilityInventoryScreen extends Screen {
     private static final int CELL_CONTENT = 16;
     private static final int CELL_ICON_OFFSET = 1;
 
-    // Ability bar slots (6 for abilities, 5 for transformations)
+    // Ability bar slots (6 for both abilities and transformations)
     private static final int BAR_REL_X = 131;
     private static final int[] ABILITY_BAR_Y  = {27, 46, 65, 84, 103, 122};
-    private static final int[] TRANS_BAR_Y    = {27, 46, 65, 84, 103};
+    private static final int[] TRANS_BAR_Y    = {27, 46, 65, 84, 103, 122};
     private static final int ICON_SIZE = 16;
 
     // Left power tabs
@@ -197,8 +197,7 @@ public class AbilityInventoryScreen extends Screen {
 
     private int getBarSlotCount() {
         return switch (selectedMode) {
-            case MODE_ABILITIES -> 6;
-            case MODE_TRANSFORMATIONS -> 5;
+            case MODE_ABILITIES, MODE_TRANSFORMATIONS -> 6;
             default -> 0;
         };
     }
@@ -471,10 +470,15 @@ public class AbilityInventoryScreen extends Screen {
                 // Duplicate indicator (abilities/transformations only)
                 if (!locked && selectedMode != MODE_PASSIVES) {
                     ResourceLocation abilityKey = SomniumRegistries.getAbilityKey(type);
-                    if (abilityKey != null && data.isAbilityOnPage(selectedPage, abilityKey)) {
-                        graphics.fill(iconX, iconY,
-                                iconX + CELL_CONTENT, iconY + CELL_CONTENT,
-                                0x40FF0000);
+                    if (abilityKey != null) {
+                        boolean onBar = selectedMode == MODE_TRANSFORMATIONS
+                                ? data.isAbilityOnTransBar(abilityKey)
+                                : data.isAbilityOnPage(selectedPage, abilityKey);
+                        if (onBar) {
+                            graphics.fill(iconX, iconY,
+                                    iconX + CELL_CONTENT, iconY + CELL_CONTENT,
+                                    0x40FF0000);
+                        }
                     }
                 }
 
@@ -497,12 +501,13 @@ public class AbilityInventoryScreen extends Screen {
             int slotX = leftPos + BAR_REL_X;
             int sy = topPos + slotY[slot];
 
-            // Only abilities mode connects to actual data
+            // Read from the correct bar
             AbilityInstance instance = null;
             if (selectedMode == MODE_ABILITIES) {
                 instance = data.getBarSlotInstance(selectedPage, slot);
+            } else if (selectedMode == MODE_TRANSFORMATIONS) {
+                instance = data.getTransBarSlotInstance(slot);
             }
-            // Transformation mode: placeholder slots (no data yet)
 
             if (instance != null) {
                 AbilityType type = instance.getAbilityType();
@@ -662,13 +667,14 @@ public class AbilityInventoryScreen extends Screen {
                                     mouseX, mouseY);
                         }
                     } else if (selectedMode == MODE_TRANSFORMATIONS) {
-                        List<Component> tooltip = new ArrayList<>();
-                        tooltip.add(Component.literal("Transformation Slot " + (slot + 1))
-                                .withStyle(ChatFormatting.LIGHT_PURPLE));
-                        tooltip.add(Component.literal("Coming soon")
-                                .withStyle(ChatFormatting.GRAY));
-                        graphics.renderTooltip(font, tooltip, Optional.empty(),
-                                mouseX, mouseY);
+                        AbilityInstance instance = data.getTransBarSlotInstance(slot);
+                        if (instance != null) {
+                            List<Component> tooltip = buildAbilityTooltip(instance.getAbilityType());
+                            tooltip.add(Component.literal("Click to remove from bar")
+                                    .withStyle(ChatFormatting.GRAY));
+                            graphics.renderTooltip(font, tooltip, Optional.empty(),
+                                    mouseX, mouseY);
+                        }
                     }
                     return;
                 }
@@ -792,8 +798,7 @@ public class AbilityInventoryScreen extends Screen {
     }
 
     private boolean handleBarSlotClick(int mx, int my) {
-        // Only abilities mode has functional bar slot interaction for now
-        if (selectedMode != MODE_ABILITIES) return false;
+        if (selectedMode == MODE_PASSIVES) return false;
 
         int slotCount = getBarSlotCount();
         int[] slotY = getBarSlotYPositions();
@@ -803,30 +808,63 @@ public class AbilityInventoryScreen extends Screen {
             int sy = topPos + slotY[slot];
             if (!isInBounds(mx, my, slotX, sy, ICON_SIZE, ICON_SIZE)) continue;
 
-            if (heldAbility != null) {
-                ResourceLocation heldKey = SomniumRegistries.getAbilityKey(heldAbility);
-                if (heldKey == null) return true;
-                if (data.isAbilityOnPage(selectedPage, heldKey)) return true;
-                if (!heldAbility.isBarEquippable()) return true;
-
-                SomniumNetwork.sendToServer(
-                        new UpdateBarSlotPacket(selectedPage, slot, heldKey));
-                data.setBarSlot(selectedPage, slot, heldAbility);
-                heldAbility = null;
-                heldFromBar = false;
-                return true;
-            } else {
-                AbilityInstance instance = data.getBarSlotInstance(selectedPage, slot);
-                if (instance == null) return true;
-                heldAbility = instance.getAbilityType();
-                heldFromBar = true;
-                SomniumNetwork.sendToServer(
-                        new UpdateBarSlotPacket(selectedPage, slot, null));
-                data.setBarSlot(selectedPage, slot, null);
-                return true;
+            if (selectedMode == MODE_ABILITIES) {
+                return handleAbilityBarSlotClick(slot);
+            } else if (selectedMode == MODE_TRANSFORMATIONS) {
+                return handleTransBarSlotClick(slot);
             }
         }
         return false;
+    }
+
+    private boolean handleAbilityBarSlotClick(int slot) {
+        if (heldAbility != null) {
+            ResourceLocation heldKey = SomniumRegistries.getAbilityKey(heldAbility);
+            if (heldKey == null) return true;
+            if (data.isAbilityOnPage(selectedPage, heldKey)) return true;
+            if (!heldAbility.isBarEquippable()) return true;
+
+            SomniumNetwork.sendToServer(
+                    new UpdateBarSlotPacket(selectedPage, slot, heldKey));
+            data.setBarSlot(selectedPage, slot, heldAbility);
+            heldAbility = null;
+            heldFromBar = false;
+            return true;
+        } else {
+            AbilityInstance instance = data.getBarSlotInstance(selectedPage, slot);
+            if (instance == null) return true;
+            heldAbility = instance.getAbilityType();
+            heldFromBar = true;
+            SomniumNetwork.sendToServer(
+                    new UpdateBarSlotPacket(selectedPage, slot, null));
+            data.setBarSlot(selectedPage, slot, null);
+            return true;
+        }
+    }
+
+    private boolean handleTransBarSlotClick(int slot) {
+        if (heldAbility != null) {
+            ResourceLocation heldKey = SomniumRegistries.getAbilityKey(heldAbility);
+            if (heldKey == null) return true;
+            if (data.isAbilityOnTransBar(heldKey)) return true;
+            if (!(heldAbility instanceof TransformationAbilityType)) return true;
+
+            SomniumNetwork.sendToServer(
+                    UpdateBarSlotPacket.forTransBar(slot, heldKey));
+            data.setTransBarSlot(slot, heldAbility);
+            heldAbility = null;
+            heldFromBar = false;
+            return true;
+        } else {
+            AbilityInstance instance = data.getTransBarSlotInstance(slot);
+            if (instance == null) return true;
+            heldAbility = instance.getAbilityType();
+            heldFromBar = true;
+            SomniumNetwork.sendToServer(
+                    UpdateBarSlotPacket.forTransBar(slot, null));
+            data.setTransBarSlot(slot, null);
+            return true;
+        }
     }
 
     private boolean handleGridClick(int mx, int my) {

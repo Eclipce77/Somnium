@@ -17,42 +17,66 @@ import java.util.function.Supplier;
 
 /**
  * Client → Server packet sent when the player assigns an ability to a bar
- * slot on a specific page, or clears a slot.
- *
- * <p>The server-side handler validates the request (ability must be unlocked,
- * bar-equippable, and not already on the same page), fires the appropriate
- * {@link AbilityEquippedEvent} or {@link AbilityUnequippedEvent}, and applies
- * the change if not canceled.</p>
+ * slot or clears a slot. Supports both the ability bar and transformation bar.
  */
 public class UpdateBarSlotPacket {
 
+    /** Ability bar (paged). */
+    public static final int BAR_ABILITY = 0;
+    /** Transformation bar (no pages). */
+    public static final int BAR_TRANSFORMATION = 1;
+
+    private final int barType;
     private final int page;
     private final int slot;
     private final String abilityId;
 
+    /**
+     * Creates a packet for the ability bar.
+     */
     public UpdateBarSlotPacket(int page, int slot, @Nullable ResourceLocation abilityId) {
+        this(BAR_ABILITY, page, slot, abilityId);
+    }
+
+    /**
+     * Creates a packet for a specific bar type.
+     */
+    public UpdateBarSlotPacket(int barType, int page, int slot,
+                               @Nullable ResourceLocation abilityId) {
+        this.barType = barType;
         this.page = page;
         this.slot = slot;
         this.abilityId = abilityId != null ? abilityId.toString() : "";
     }
 
-    private UpdateBarSlotPacket(int page, int slot, String abilityId) {
+    private UpdateBarSlotPacket(int barType, int page, int slot, String abilityId) {
+        this.barType = barType;
         this.page = page;
         this.slot = slot;
         this.abilityId = abilityId;
     }
 
+    /**
+     * Creates a packet for the transformation bar (page is ignored).
+     */
+    public static UpdateBarSlotPacket forTransBar(int slot,
+                                                  @Nullable ResourceLocation abilityId) {
+        return new UpdateBarSlotPacket(BAR_TRANSFORMATION, 0, slot, abilityId);
+    }
+
     public void encode(FriendlyByteBuf buf) {
+        buf.writeVarInt(barType);
         buf.writeVarInt(page);
         buf.writeVarInt(slot);
         buf.writeUtf(abilityId);
     }
 
     public static UpdateBarSlotPacket decode(FriendlyByteBuf buf) {
+        int barType = buf.readVarInt();
         int page = buf.readVarInt();
         int slot = buf.readVarInt();
         String abilityId = buf.readUtf(256);
-        return new UpdateBarSlotPacket(page, slot, abilityId);
+        return new UpdateBarSlotPacket(barType, page, slot, abilityId);
     }
 
     public void handle(Supplier<NetworkEvent.Context> ctx) {
@@ -64,23 +88,43 @@ public class UpdateBarSlotPacket {
             SomniumPlayerData data = SomniumCapability.get(player);
             if (data == null) return;
 
-            if (abilityId.isEmpty()) {
-                handleUnequip(player, data);
+            if (barType == BAR_TRANSFORMATION) {
+                handleTransformationBar(player, data);
             } else {
-                handleEquip(player, data);
+                if (abilityId.isEmpty()) {
+                    handleUnequip(player, data);
+                } else {
+                    handleEquip(player, data);
+                }
             }
 
-            // Always re-sync to ensure client matches server state
-            // (important if an event was canceled)
             SomniumNetwork.syncToClient(player);
         });
         context.setPacketHandled(true);
     }
 
-    /**
-     * Handles clearing a bar slot. Fires {@link AbilityUnequippedEvent}
-     * if there was an ability in the slot.
-     */
+    // ═══════════════════════════════════════════════════════════════════
+    //  Transformation bar handler (simpler — no events/pages)
+    // ═══════════════════════════════════════════════════════════════════
+
+    private void handleTransformationBar(ServerPlayer player, SomniumPlayerData data) {
+        if (abilityId.isEmpty()) {
+            data.setTransBarSlot(slot, null);
+        } else {
+            ResourceLocation key = new ResourceLocation(abilityId);
+            AbilityType type = SomniumRegistries.getAbilityValue(key);
+            if (type == null) return;
+            if (!data.isAbilityUnlocked(type)) return;
+            // Duplicate prevention on trans bar
+            if (data.isAbilityOnTransBar(key)) return;
+            data.setTransBarSlot(slot, type);
+        }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    //  Ability bar handlers (with events, pages, duplicate prevention)
+    // ═══════════════════════════════════════════════════════════════════
+
     private void handleUnequip(ServerPlayer player, SomniumPlayerData data) {
         ResourceLocation existingKey = data.getBarSlotKey(page, slot);
         if (existingKey == null) return;
@@ -90,17 +134,13 @@ public class UpdateBarSlotPacket {
             AbilityUnequippedEvent event = new AbilityUnequippedEvent(
                     player, existingType, page, slot);
             if (MinecraftForge.EVENT_BUS.post(event)) {
-                return; // Canceled
+                return;
             }
         }
 
         data.setBarSlot(page, slot, null);
     }
 
-    /**
-     * Handles equipping an ability to a bar slot. Validates the ability,
-     * checks for duplicates on the same page, fires events, and applies.
-     */
     private void handleEquip(ServerPlayer player, SomniumPlayerData data) {
         ResourceLocation key = new ResourceLocation(abilityId);
         AbilityType type = SomniumRegistries.getAbilityValue(key);
@@ -108,11 +148,8 @@ public class UpdateBarSlotPacket {
 
         if (!data.isAbilityUnlocked(type)) return;
         if (!type.isBarEquippable()) return;
-
-        // Duplicate prevention: same ability can't appear twice on the same page
         if (data.isAbilityOnPage(page, key)) return;
 
-        // If target slot is occupied, fire unequip event first
         ResourceLocation existingKey = data.getBarSlotKey(page, slot);
         if (existingKey != null) {
             AbilityType existingType = SomniumRegistries.getAbilityValue(existingKey);
@@ -120,18 +157,16 @@ public class UpdateBarSlotPacket {
                 AbilityUnequippedEvent unequipEvent = new AbilityUnequippedEvent(
                         player, existingType, page, slot);
                 if (MinecraftForge.EVENT_BUS.post(unequipEvent)) {
-                    return; // Can't remove existing, so can't equip new
+                    return;
                 }
             }
-            // Clear the old ability first
             data.setBarSlot(page, slot, null);
         }
 
-        // Fire equip event
         AbilityEquippedEvent equipEvent = new AbilityEquippedEvent(
                 player, type, page, slot);
         if (MinecraftForge.EVENT_BUS.post(equipEvent)) {
-            return; // Canceled
+            return;
         }
 
         data.setBarSlot(page, slot, type);

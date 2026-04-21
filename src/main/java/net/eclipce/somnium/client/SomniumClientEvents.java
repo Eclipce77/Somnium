@@ -5,6 +5,7 @@ import net.eclipce.somnium.client.keybind.SomniumKeybinds;
 import net.eclipce.somnium.core.ability.AbilityInstance;
 import net.eclipce.somnium.core.data.SomniumPlayerData;
 import net.eclipce.somnium.network.ActivateAbilityPacket;
+import net.eclipce.somnium.network.QuickTransformPacket;
 import net.eclipce.somnium.network.SomniumNetwork;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
@@ -120,19 +121,34 @@ public class SomniumClientEvents {
             // Don't process keybinds when a screen is open
             if (mc.screen != null) return;
 
+            // Auto-hide transformation bar when a transformation activates
+            if (AbilityBarOverlay.isShowingTransformationBar()
+                    && localData != null && localData.hasActiveTransformation()) {
+                AbilityBarOverlay.hideTransformationBar();
+            }
+
+            // Determine which bar slot keys target
+            boolean transBarActive = AbilityBarOverlay.isShowingTransformationBar();
+            int barType = transBarActive ? 1 : 0;
+            int maxSlots = transBarActive
+                    ? SomniumPlayerData.TRANS_BAR_SIZE : SomniumPlayerData.BAR_SIZE;
+
             // Process ability slot keys — detect press/release transitions
             for (int slot = 0; slot < SomniumPlayerData.BAR_SIZE; slot++) {
                 boolean isDown = SomniumKeybinds.ABILITY_SLOTS[slot].isDown();
                 boolean wasDown = slotKeyHeld[slot];
 
                 if (isDown && !wasDown) {
-                    // Key just pressed — send PRESS
-                    SomniumNetwork.sendToServer(
-                            new ActivateAbilityPacket(slot, ActivateAbilityPacket.Action.PRESS));
+                    // Only send if slot is within the active bar's range
+                    if (slot < maxSlots) {
+                        SomniumNetwork.sendToServer(
+                                new ActivateAbilityPacket(slot, ActivateAbilityPacket.Action.PRESS, barType));
+                    }
                 } else if (!isDown && wasDown) {
-                    // Key just released — send RELEASE
-                    SomniumNetwork.sendToServer(
-                            new ActivateAbilityPacket(slot, ActivateAbilityPacket.Action.RELEASE));
+                    if (slot < maxSlots) {
+                        SomniumNetwork.sendToServer(
+                                new ActivateAbilityPacket(slot, ActivateAbilityPacket.Action.RELEASE, barType));
+                    }
                 }
 
                 slotKeyHeld[slot] = isDown;
@@ -140,7 +156,8 @@ public class SomniumClientEvents {
 
             // Process utility keys
             if (SomniumKeybinds.PAGE_TOGGLE.consumeClick()) {
-                if (localData != null) {
+                // Page toggle only applies when not showing transformation bar
+                if (!transBarActive && localData != null) {
                     int nextPage = (localData.getActivePage() + 1) % SomniumPlayerData.MAX_PAGES;
                     localData.setActivePage(nextPage);
                     SomniumNetwork.sendToServer(
@@ -154,10 +171,15 @@ public class SomniumClientEvents {
                 }
             }
 
+            // Transformation keybind
             if (SomniumKeybinds.TRANSFORMATION_QUICKBIND.consumeClick()) {
-                // TODO: Quick-activate the player's transformation ability
-                // This will find the first transformation on the bar and
-                // send an activation packet for it
+                if (mc.player.isCrouching()) {
+                    // Crouching: quick-bind — activate/deactivate most recent
+                    SomniumNetwork.sendToServer(new QuickTransformPacket());
+                } else {
+                    // Not crouching: toggle transformation bar visibility
+                    AbilityBarOverlay.toggleTransformationBar();
+                }
             }
         }
     }

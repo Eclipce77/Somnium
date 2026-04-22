@@ -84,6 +84,10 @@ public class SomniumPlayerData {
     private static final String TAG_PROGRESS_DATA = "Data";
     private static final String TAG_TRANS_BAR = "TransformationBar";
     private static final String TAG_MOST_RECENT_TRANS = "MostRecentTransformation";
+    private static final String TAG_CATEGORY_BARS = "CategoryBars";
+    private static final String TAG_CATEGORY_ID = "CategoryId";
+    private static final String TAG_CATEGORY_SLOTS = "Slots";
+    private static final String TAG_MOST_RECENT_CATEGORY = "MostRecentCategory";
 
     // ═══════════════════════════════════════════════════════════════════
     //  Fields
@@ -146,6 +150,17 @@ public class SomniumPlayerData {
      */
     @Nullable
     private ResourceLocation mostRecentTransformation = null;
+
+    /**
+     * Category bars — one 6-slot bar per registered custom category.
+     * Keyed by category ResourceLocation.
+     */
+    private final Map<ResourceLocation, ResourceLocation[]> categoryBars = new LinkedHashMap<>();
+
+    /**
+     * Most recently activated ability per category, for quick-bind support.
+     */
+    private final Map<ResourceLocation, ResourceLocation> mostRecentCategoryAbility = new LinkedHashMap<>();
 
     /**
      * Per-ability-per-power progression data. Keys are composite strings
@@ -673,6 +688,90 @@ public class SomniumPlayerData {
     }
 
     // ═══════════════════════════════════════════════════════════════════
+    //  Custom category bar management
+    // ═══════════════════════════════════════════════════════════════════
+
+    /**
+     * Ensures a bar array exists for the given category.
+     */
+    private ResourceLocation[] getOrCreateCategoryBar(ResourceLocation categoryKey) {
+        return categoryBars.computeIfAbsent(categoryKey,
+                k -> new ResourceLocation[BAR_SIZE]);
+    }
+
+    /**
+     * Equips an ability to a category bar slot.
+     */
+    public boolean setCategoryBarSlot(ResourceLocation categoryKey, int slot,
+                                      @Nullable AbilityType abilityType) {
+        if (slot < 0 || slot >= BAR_SIZE) return false;
+        ResourceLocation[] bar = getOrCreateCategoryBar(categoryKey);
+
+        if (abilityType == null) {
+            bar[slot] = null;
+            markDirty();
+            return true;
+        }
+
+        ResourceLocation key = SomniumRegistries.getAbilityKey(abilityType);
+        if (key == null || !unlockedAbilities.contains(key)) return false;
+
+        bar[slot] = key;
+        markDirty();
+        return true;
+    }
+
+    /**
+     * Gets the AbilityInstance in a category bar slot.
+     */
+    @Nullable
+    public AbilityInstance getCategoryBarSlotInstance(ResourceLocation categoryKey, int slot) {
+        if (slot < 0 || slot >= BAR_SIZE) return null;
+        ResourceLocation[] bar = categoryBars.get(categoryKey);
+        if (bar == null) return null;
+        ResourceLocation key = bar[slot];
+        return key != null ? abilityInventory.get(key) : null;
+    }
+
+    /**
+     * Gets the ability key in a category bar slot.
+     */
+    @Nullable
+    public ResourceLocation getCategoryBarSlotKey(ResourceLocation categoryKey, int slot) {
+        if (slot < 0 || slot >= BAR_SIZE) return null;
+        ResourceLocation[] bar = categoryBars.get(categoryKey);
+        if (bar == null) return null;
+        return bar[slot];
+    }
+
+    /**
+     * Checks if an ability is on any slot of a category bar.
+     */
+    public boolean isAbilityOnCategoryBar(ResourceLocation categoryKey,
+                                          @Nullable ResourceLocation abilityKey) {
+        if (abilityKey == null) return false;
+        ResourceLocation[] bar = categoryBars.get(categoryKey);
+        if (bar == null) return false;
+        for (ResourceLocation k : bar) {
+            if (abilityKey.equals(k)) return true;
+        }
+        return false;
+    }
+
+    /** @return the most recently activated ability for a category */
+    @Nullable
+    public ResourceLocation getMostRecentCategoryAbility(ResourceLocation categoryKey) {
+        return mostRecentCategoryAbility.get(categoryKey);
+    }
+
+    /** Sets the most recently activated ability for a category. */
+    public void setMostRecentCategoryAbility(ResourceLocation categoryKey,
+                                             ResourceLocation abilityKey) {
+        mostRecentCategoryAbility.put(categoryKey, abilityKey);
+        markDirty();
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
     //  Unlock progress tracking
     // ═══════════════════════════════════════════════════════════════════
 
@@ -839,6 +938,16 @@ public class SomniumPlayerData {
         System.arraycopy(source.transformationBar, 0, this.transformationBar, 0, TRANS_BAR_SIZE);
         this.mostRecentTransformation = source.mostRecentTransformation;
 
+        this.categoryBars.clear();
+        for (Map.Entry<ResourceLocation, ResourceLocation[]> entry : source.categoryBars.entrySet()) {
+            ResourceLocation[] copy = new ResourceLocation[BAR_SIZE];
+            System.arraycopy(entry.getValue(), 0, copy, 0, BAR_SIZE);
+            this.categoryBars.put(entry.getKey(), copy);
+        }
+
+        this.mostRecentCategoryAbility.clear();
+        this.mostRecentCategoryAbility.putAll(source.mostRecentCategoryAbility);
+
         this.unlockProgress.clear();
         for (Map.Entry<String, CompoundTag> entry : source.unlockProgress.entrySet()) {
             this.unlockProgress.put(entry.getKey(), entry.getValue().copy());
@@ -947,6 +1056,36 @@ public class SomniumPlayerData {
         if (mostRecentTransformation != null) {
             root.putString(TAG_MOST_RECENT_TRANS, mostRecentTransformation.toString());
         }
+
+        // Category bars
+        ListTag categoryBarsTag = new ListTag();
+        for (Map.Entry<ResourceLocation, ResourceLocation[]> entry : categoryBars.entrySet()) {
+            CompoundTag catTag = new CompoundTag();
+            catTag.putString(TAG_CATEGORY_ID, entry.getKey().toString());
+            ListTag slotsTag = new ListTag();
+            ResourceLocation[] bar = entry.getValue();
+            for (int slot = 0; slot < BAR_SIZE; slot++) {
+                if (bar[slot] != null) {
+                    CompoundTag slotTag = new CompoundTag();
+                    slotTag.putInt(TAG_BAR_SLOT, slot);
+                    slotTag.putString(TAG_BAR_ABILITY_ID, bar[slot].toString());
+                    slotsTag.add(slotTag);
+                }
+            }
+            catTag.put(TAG_CATEGORY_SLOTS, slotsTag);
+            categoryBarsTag.add(catTag);
+        }
+        root.put(TAG_CATEGORY_BARS, categoryBarsTag);
+
+        // Most recent category abilities
+        ListTag mostRecentCatTag = new ListTag();
+        for (Map.Entry<ResourceLocation, ResourceLocation> entry : mostRecentCategoryAbility.entrySet()) {
+            CompoundTag catTag = new CompoundTag();
+            catTag.putString(TAG_CATEGORY_ID, entry.getKey().toString());
+            catTag.putString(TAG_BAR_ABILITY_ID, entry.getValue().toString());
+            mostRecentCatTag.add(catTag);
+        }
+        root.put(TAG_MOST_RECENT_CATEGORY, mostRecentCatTag);
 
         // Unlock progress — list of {Key, Data} entries
         ListTag progressTag = new ListTag();
@@ -1064,6 +1203,42 @@ public class SomniumPlayerData {
                     root.getString(TAG_MOST_RECENT_TRANS));
         } else {
             mostRecentTransformation = null;
+        }
+
+        // Category bars
+        categoryBars.clear();
+        if (root.contains(TAG_CATEGORY_BARS)) {
+            ListTag categoryBarsTag = root.getList(TAG_CATEGORY_BARS, Tag.TAG_COMPOUND);
+            for (int i = 0; i < categoryBarsTag.size(); i++) {
+                CompoundTag catTag = categoryBarsTag.getCompound(i);
+                ResourceLocation catKey = new ResourceLocation(catTag.getString(TAG_CATEGORY_ID));
+                ResourceLocation[] bar = new ResourceLocation[BAR_SIZE];
+                ListTag slotsTag = catTag.getList(TAG_CATEGORY_SLOTS, Tag.TAG_COMPOUND);
+                for (int j = 0; j < slotsTag.size(); j++) {
+                    CompoundTag slotTag = slotsTag.getCompound(j);
+                    int slot = slotTag.getInt(TAG_BAR_SLOT);
+                    if (slot >= 0 && slot < BAR_SIZE) {
+                        ResourceLocation abilityKey = new ResourceLocation(
+                                slotTag.getString(TAG_BAR_ABILITY_ID));
+                        if (abilityInventory.containsKey(abilityKey)) {
+                            bar[slot] = abilityKey;
+                        }
+                    }
+                }
+                categoryBars.put(catKey, bar);
+            }
+        }
+
+        // Most recent category abilities
+        mostRecentCategoryAbility.clear();
+        if (root.contains(TAG_MOST_RECENT_CATEGORY)) {
+            ListTag mostRecentCatTag = root.getList(TAG_MOST_RECENT_CATEGORY, Tag.TAG_COMPOUND);
+            for (int i = 0; i < mostRecentCatTag.size(); i++) {
+                CompoundTag catTag = mostRecentCatTag.getCompound(i);
+                ResourceLocation catKey = new ResourceLocation(catTag.getString(TAG_CATEGORY_ID));
+                ResourceLocation abilityKey = new ResourceLocation(catTag.getString(TAG_BAR_ABILITY_ID));
+                mostRecentCategoryAbility.put(catKey, abilityKey);
+            }
         }
 
         // Unlock progress

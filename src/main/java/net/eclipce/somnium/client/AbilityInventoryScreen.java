@@ -6,6 +6,7 @@ import net.eclipce.somnium.core.ability.AbilityInstance;
 import net.eclipce.somnium.core.ability.AbilityType;
 import net.eclipce.somnium.core.ability.ActivationType;
 import net.eclipce.somnium.core.ability.transformation.TransformationAbilityType;
+import net.eclipce.somnium.core.category.AbilityCategory;
 import net.eclipce.somnium.core.data.SomniumPlayerData;
 import net.eclipce.somnium.core.power.Power;
 import net.eclipce.somnium.core.registry.SomniumRegistries;
@@ -98,10 +99,9 @@ public class AbilityInventoryScreen extends Screen {
     private static final int CELL_CONTENT = 16;
     private static final int CELL_ICON_OFFSET = 1;
 
-    // Ability bar slots (6 for both abilities and transformations)
+    // Ability bar slots (6 for all bar types)
     private static final int BAR_REL_X = 131;
     private static final int[] ABILITY_BAR_Y  = {27, 46, 65, 84, 103, 122};
-    private static final int[] TRANS_BAR_Y    = {27, 46, 65, 84, 103, 122};
     private static final int ICON_SIZE = 16;
 
     // Left power tabs
@@ -128,10 +128,12 @@ public class AbilityInventoryScreen extends Screen {
     private static final int PAGE_BACK_REL_X = 128, PAGE_BACK_REL_Y = 145;
     private static final int PAGE_FWD_REL_X = 142, PAGE_FWD_REL_Y = 145;
 
-    // Mode indices
+    // Mode indices — built-in modes
     private static final int MODE_TRANSFORMATIONS = 0;
     private static final int MODE_ABILITIES = 1;
     private static final int MODE_PASSIVES = 2;
+    /** Custom category modes start at this offset. Mode = CATEGORY_START + index in AbilityCategory.getAll(). */
+    private static final int MODE_CATEGORY_START = 3;
 
     // ═══════════════════════════════════════════════════════════════════
     //  State
@@ -148,6 +150,7 @@ public class AbilityInventoryScreen extends Screen {
 
     private List<Power> powers = new ArrayList<>();
     private List<AbilityType> currentAbilities = new ArrayList<>();
+    private List<AbilityCategory> registeredCategories = new ArrayList<>();
 
     @Nullable
     private AbilityType heldAbility = null;
@@ -168,6 +171,7 @@ public class AbilityInventoryScreen extends Screen {
         super.init();
         leftPos = (width - VIS_W) / 2;
         topPos = (height - VIS_H) / 2;
+        registeredCategories = new ArrayList<>(AbilityCategory.getAll());
         refreshPowers();
         SomniumNetwork.sendToServer(new RequestSyncPacket());
     }
@@ -183,7 +187,8 @@ public class AbilityInventoryScreen extends Screen {
         return switch (selectedMode) {
             case MODE_TRANSFORMATIONS -> BG_TRANSFORMATIONS;
             case MODE_PASSIVES -> BG_PASSIVES;
-            default -> BG_ABILITIES;
+            case MODE_ABILITIES -> BG_ABILITIES;
+            default -> BG_TRANSFORMATIONS; // Category modes use transformation layout (bar, no pages)
         };
     }
 
@@ -196,14 +201,27 @@ public class AbilityInventoryScreen extends Screen {
     }
 
     private int getBarSlotCount() {
-        return switch (selectedMode) {
-            case MODE_ABILITIES, MODE_TRANSFORMATIONS -> 6;
-            default -> 0;
-        };
+        return selectedMode == MODE_PASSIVES ? 0 : 6;
     }
 
     private int[] getBarSlotYPositions() {
-        return selectedMode == MODE_TRANSFORMATIONS ? TRANS_BAR_Y : ABILITY_BAR_Y;
+        return ABILITY_BAR_Y; // All bars use same Y positions (6 slots)
+    }
+
+    /** Returns the total number of right-side tabs (3 built-in + categories). */
+    private int getTotalTabCount() {
+        return 3 + registeredCategories.size();
+    }
+
+    /** Returns the category for the current mode, or null if built-in mode. */
+    @Nullable
+    private AbilityCategory getSelectedCategory() {
+        if (selectedMode < MODE_CATEGORY_START) return null;
+        int catIndex = selectedMode - MODE_CATEGORY_START;
+        if (catIndex >= 0 && catIndex < registeredCategories.size()) {
+            return registeredCategories.get(catIndex);
+        }
+        return null;
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -222,22 +240,35 @@ public class AbilityInventoryScreen extends Screen {
         currentAbilities.clear();
         if (selectedPowerTab >= 0 && selectedPowerTab < powers.size()) {
             Power power = powers.get(selectedPowerTab);
+            AbilityCategory selectedCat = getSelectedCategory();
+
             for (AbilityType type : power.getAbilityTypes()) {
-                switch (selectedMode) {
-                    case MODE_TRANSFORMATIONS -> {
-                        if (type instanceof TransformationAbilityType) {
-                            currentAbilities.add(type);
-                        }
+                if (selectedCat != null) {
+                    // Custom category mode: show only abilities with matching category
+                    if (type.getCategory() == selectedCat) {
+                        currentAbilities.add(type);
                     }
-                    case MODE_ABILITIES -> {
-                        if (!(type instanceof TransformationAbilityType)
-                                && type.getActivationType() != ActivationType.PASSIVE) {
-                            currentAbilities.add(type);
+                } else {
+                    // Built-in modes: exclude categorized abilities
+                    switch (selectedMode) {
+                        case MODE_TRANSFORMATIONS -> {
+                            if (type instanceof TransformationAbilityType
+                                    && type.getCategory() == null) {
+                                currentAbilities.add(type);
+                            }
                         }
-                    }
-                    case MODE_PASSIVES -> {
-                        if (type.getActivationType() == ActivationType.PASSIVE) {
-                            currentAbilities.add(type);
+                        case MODE_ABILITIES -> {
+                            if (!(type instanceof TransformationAbilityType)
+                                    && type.getActivationType() != ActivationType.PASSIVE
+                                    && type.getCategory() == null) {
+                                currentAbilities.add(type);
+                            }
+                        }
+                        case MODE_PASSIVES -> {
+                            if (type.getActivationType() == ActivationType.PASSIVE
+                                    && type.getCategory() == null) {
+                                currentAbilities.add(type);
+                            }
                         }
                     }
                 }
@@ -386,19 +417,32 @@ public class AbilityInventoryScreen extends Screen {
     }
 
     /**
-     * Renders the right-side type tabs (T, A, P) as separate sprites.
+     * Renders the right-side type tabs (T, A, P, + custom categories).
      */
     private void renderTypeTabs(GuiGraphics graphics, int mouseX, int mouseY) {
-        for (int i = 0; i < 3; i++) {
+        int totalTabs = getTotalTabCount();
+        for (int i = 0; i < totalTabs; i++) {
             boolean isSelected = (i == selectedMode);
             int tabX = leftPos + RIGHT_TAB_REL_X;
-            int tabY = topPos + RIGHT_TAB_REL_Y[i];
+            int tabY = topPos + RIGHT_TAB_REL_Y[0] + i * (RIGHT_TAB_H + 2);
 
             ResourceLocation tabTex = isSelected ? TAB_RIGHT_SEL : TAB_RIGHT;
             graphics.blit(tabTex, tabX, tabY, 0, 0,
                     RIGHT_TAB_W, RIGHT_TAB_H, RIGHT_TAB_W, RIGHT_TAB_H);
 
-            String label = TYPE_TAB_LABELS[i];
+            // Determine label
+            String label;
+            if (i < 3) {
+                label = TYPE_TAB_LABELS[i];
+            } else {
+                int catIndex = i - MODE_CATEGORY_START;
+                if (catIndex >= 0 && catIndex < registeredCategories.size()) {
+                    label = registeredCategories.get(catIndex).getTabLabel();
+                } else {
+                    label = "?";
+                }
+            }
+
             int textX = tabX + (RIGHT_TAB_W - font.width(label)) / 2;
             int textY = tabY + (RIGHT_TAB_H - font.lineHeight) / 2;
             graphics.drawString(font, label, textX, textY,
@@ -467,13 +511,19 @@ public class AbilityInventoryScreen extends Screen {
                     }
                 }
 
-                // Duplicate indicator (abilities/transformations only)
+                // Duplicate indicator (abilities/transformations/categories only)
                 if (!locked && selectedMode != MODE_PASSIVES) {
                     ResourceLocation abilityKey = SomniumRegistries.getAbilityKey(type);
                     if (abilityKey != null) {
-                        boolean onBar = selectedMode == MODE_TRANSFORMATIONS
-                                ? data.isAbilityOnTransBar(abilityKey)
-                                : data.isAbilityOnPage(selectedPage, abilityKey);
+                        boolean onBar;
+                        if (selectedMode == MODE_TRANSFORMATIONS) {
+                            onBar = data.isAbilityOnTransBar(abilityKey);
+                        } else if (selectedMode >= MODE_CATEGORY_START) {
+                            AbilityCategory cat = getSelectedCategory();
+                            onBar = cat != null && data.isAbilityOnCategoryBar(cat.getId(), abilityKey);
+                        } else {
+                            onBar = data.isAbilityOnPage(selectedPage, abilityKey);
+                        }
                         if (onBar) {
                             graphics.fill(iconX, iconY,
                                     iconX + CELL_CONTENT, iconY + CELL_CONTENT,
@@ -507,6 +557,11 @@ public class AbilityInventoryScreen extends Screen {
                 instance = data.getBarSlotInstance(selectedPage, slot);
             } else if (selectedMode == MODE_TRANSFORMATIONS) {
                 instance = data.getTransBarSlotInstance(slot);
+            } else if (selectedMode >= MODE_CATEGORY_START) {
+                AbilityCategory cat = getSelectedCategory();
+                if (cat != null) {
+                    instance = data.getCategoryBarSlotInstance(cat.getId(), slot);
+                }
             }
 
             if (instance != null) {
@@ -675,6 +730,18 @@ public class AbilityInventoryScreen extends Screen {
                             graphics.renderTooltip(font, tooltip, Optional.empty(),
                                     mouseX, mouseY);
                         }
+                    } else if (selectedMode >= MODE_CATEGORY_START) {
+                        AbilityCategory cat = getSelectedCategory();
+                        if (cat != null) {
+                            AbilityInstance instance = data.getCategoryBarSlotInstance(cat.getId(), slot);
+                            if (instance != null) {
+                                List<Component> tooltip = buildAbilityTooltip(instance.getAbilityType());
+                                tooltip.add(Component.literal("Click to remove from bar")
+                                        .withStyle(ChatFormatting.GRAY));
+                                graphics.renderTooltip(font, tooltip, Optional.empty(),
+                                        mouseX, mouseY);
+                            }
+                        }
                     }
                     return;
                 }
@@ -746,6 +813,10 @@ public class AbilityInventoryScreen extends Screen {
         if (type instanceof TransformationAbilityType) {
             tooltip.add(Component.literal("Transformation")
                     .withStyle(ChatFormatting.LIGHT_PURPLE));
+        } else if (type.getCategory() != null) {
+            AbilityCategory cat = type.getCategory();
+            tooltip.add(cat.getDisplayName().copy()
+                    .withStyle(cat.getTooltipColor()));
         }
 
         // Grayed indicator
@@ -812,6 +883,9 @@ public class AbilityInventoryScreen extends Screen {
                 return handleAbilityBarSlotClick(slot);
             } else if (selectedMode == MODE_TRANSFORMATIONS) {
                 return handleTransBarSlotClick(slot);
+            } else if (selectedMode >= MODE_CATEGORY_START) {
+                AbilityCategory cat = getSelectedCategory();
+                if (cat != null) return handleCategoryBarSlotClick(slot, cat);
             }
         }
         return false;
@@ -863,6 +937,33 @@ public class AbilityInventoryScreen extends Screen {
             SomniumNetwork.sendToServer(
                     UpdateBarSlotPacket.forTransBar(slot, null));
             data.setTransBarSlot(slot, null);
+            return true;
+        }
+    }
+
+    private boolean handleCategoryBarSlotClick(int slot, AbilityCategory category) {
+        ResourceLocation catKey = category.getId();
+        if (heldAbility != null) {
+            ResourceLocation heldKey = SomniumRegistries.getAbilityKey(heldAbility);
+            if (heldKey == null) return true;
+            if (data.isAbilityOnCategoryBar(catKey, heldKey)) return true;
+            // Verify the held ability belongs to this category
+            if (heldAbility.getCategory() != category) return true;
+
+            SomniumNetwork.sendToServer(
+                    UpdateBarSlotPacket.forCategoryBar(catKey, slot, heldKey));
+            data.setCategoryBarSlot(catKey, slot, heldAbility);
+            heldAbility = null;
+            heldFromBar = false;
+            return true;
+        } else {
+            AbilityInstance instance = data.getCategoryBarSlotInstance(catKey, slot);
+            if (instance == null) return true;
+            heldAbility = instance.getAbilityType();
+            heldFromBar = true;
+            SomniumNetwork.sendToServer(
+                    UpdateBarSlotPacket.forCategoryBar(catKey, slot, null));
+            data.setCategoryBarSlot(catKey, slot, null);
             return true;
         }
     }
@@ -926,9 +1027,10 @@ public class AbilityInventoryScreen extends Screen {
     }
 
     private boolean handleTypeTabClick(int mx, int my) {
-        for (int i = 0; i < 3; i++) {
+        int totalTabs = getTotalTabCount();
+        for (int i = 0; i < totalTabs; i++) {
             int tabX = leftPos + RIGHT_TAB_REL_X;
-            int tabY = topPos + RIGHT_TAB_REL_Y[i];
+            int tabY = topPos + RIGHT_TAB_REL_Y[0] + i * (RIGHT_TAB_H + 2);
             if (isInBounds(mx, my, tabX, tabY, RIGHT_TAB_W, RIGHT_TAB_H)) {
                 selectedMode = i;
                 refreshAbilities();

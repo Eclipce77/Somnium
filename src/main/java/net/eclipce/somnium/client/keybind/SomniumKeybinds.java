@@ -80,12 +80,17 @@ public final class SomniumKeybinds {
     /** Keybind to open the ability inventory screen. Default: P */
     public static final KeyMapping ABILITY_INVENTORY = new KeyMapping(
             "key." + Somnium.MOD_ID + ".ability_inventory",
-            InputConstants.Type.KEYSYM, GLFW.GLFW_KEY_I, CATEGORY);
+            InputConstants.Type.KEYSYM, GLFW.GLFW_KEY_P, CATEGORY);
 
     /** Keybind for transformation quick activation (WIP). Default: T */
     public static final KeyMapping TRANSFORMATION_QUICKBIND = new KeyMapping(
             "key." + Somnium.MOD_ID + ".transformation",
-            InputConstants.Type.KEYSYM, GLFW.GLFW_KEY_Y, CATEGORY);
+            InputConstants.Type.KEYSYM, GLFW.GLFW_KEY_T, CATEGORY);
+
+    /** Keybind for Utility category bar toggle (test content). Default: ~ (grave accent) */
+    public static final KeyMapping UTILITY_BAR = new KeyMapping(
+            "key." + Somnium.MOD_ID + ".utility_bar",
+            InputConstants.Type.KEYSYM, GLFW.GLFW_KEY_GRAVE_ACCENT, CATEGORY);
 
     // ═══════════════════════════════════════════════════════════════════
     //  Utility methods
@@ -101,7 +106,8 @@ public final class SomniumKeybinds {
         return new KeyMapping[]{
                 ABILITY_SLOT_1, ABILITY_SLOT_2, ABILITY_SLOT_3,
                 ABILITY_SLOT_4, ABILITY_SLOT_5, ABILITY_SLOT_6,
-                PAGE_TOGGLE, ABILITY_INVENTORY, TRANSFORMATION_QUICKBIND
+                PAGE_TOGGLE, ABILITY_INVENTORY, TRANSFORMATION_QUICKBIND,
+                UTILITY_BAR
         };
     }
 

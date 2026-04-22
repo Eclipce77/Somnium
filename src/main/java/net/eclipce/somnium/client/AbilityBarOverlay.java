@@ -16,6 +16,8 @@ import net.minecraft.resources.ResourceLocation;
 import net.minecraftforge.client.gui.overlay.ForgeGui;
 import net.minecraftforge.client.gui.overlay.IGuiOverlay;
 
+import javax.annotation.Nullable;
+
 /**
  * The HUD overlay that renders the ability bar on screen.
  *
@@ -89,25 +91,64 @@ public class AbilityBarOverlay implements IGuiOverlay {
     //  Transformation bar toggle
     // ═══════════════════════════════════════════════════════════════════
 
-    /**
-     * Whether the transformation bar is currently visible instead of
-     * the ability bar. Toggled by the transformation keybind.
-     */
+    /** Whether the transformation bar is currently visible instead of
+     * the ability bar. Toggled by the transformation keybind. */
     private static boolean showTransformationBar = false;
+
+    /** The currently shown custom category bar key, or null if not showing. */
+    @Nullable
+    private static ResourceLocation activeCategoryBar = null;
 
     /** @return true if the transformation bar is currently displayed */
     public static boolean isShowingTransformationBar() {
         return showTransformationBar;
     }
 
-    /** Toggles transformation bar visibility on/off. */
+    /** Toggles transformation bar visibility on/off. Hides any category bar. */
     public static void toggleTransformationBar() {
+        activeCategoryBar = null;
         showTransformationBar = !showTransformationBar;
     }
 
-    /** Hides the transformation bar (e.g., after a transformation activates). */
+    /** Hides the transformation bar. */
     public static void hideTransformationBar() {
         showTransformationBar = false;
+    }
+
+    /** @return true if any custom category bar is currently displayed */
+    public static boolean isShowingCategoryBar() {
+        return activeCategoryBar != null;
+    }
+
+    /** @return the currently shown category key, or null */
+    @Nullable
+    public static ResourceLocation getActiveCategoryBar() {
+        return activeCategoryBar;
+    }
+
+    /**
+     * Toggles a custom category bar on/off. Hides transformation bar.
+     * If a different category bar is showing, switches to this one.
+     *
+     * @param categoryKey the category to show/toggle
+     */
+    public static void toggleCategoryBar(ResourceLocation categoryKey) {
+        showTransformationBar = false;
+        if (categoryKey.equals(activeCategoryBar)) {
+            activeCategoryBar = null;
+        } else {
+            activeCategoryBar = categoryKey;
+        }
+    }
+
+    /** Hides any custom category bar. */
+    public static void hideCategoryBar() {
+        activeCategoryBar = null;
+    }
+
+    /** @return true if any alternate bar (transformation or category) is showing */
+    public static boolean isShowingAlternateBar() {
+        return showTransformationBar || activeCategoryBar != null;
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -160,8 +201,8 @@ public class AbilityBarOverlay implements IGuiOverlay {
         if (data == null) return;
 
         // Determine if we should show the paged texture
-        // Transformation bar never shows page arrows
-        boolean paged = !showTransformationBar && isPaged();
+        // Transformation bar and category bars never show page arrows
+        boolean paged = !showTransformationBar && activeCategoryBar == null && isPaged();
         int visibleHeight = paged ? VISIBLE_HEIGHT_PAGED : VISIBLE_HEIGHT_NORMAL;
         ResourceLocation texture;
         if (paged) {
@@ -212,9 +253,7 @@ public class AbilityBarOverlay implements IGuiOverlay {
         graphics.blit(texture, barX, barY, 0, 0, TEX_WIDTH, TEX_HEIGHT, TEX_WIDTH, TEX_HEIGHT);
 
         // Render ability icons and cooldown overlays in each slot
-        int slotCount = showTransformationBar
-                ? SomniumPlayerData.TRANS_BAR_SIZE : SomniumPlayerData.BAR_SIZE;
-        for (int slot = 0; slot < slotCount; slot++) {
+        for (int slot = 0; slot < SomniumPlayerData.BAR_SIZE; slot++) {
             int iconX = barX + SLOT_ICON_X;
             int iconY = barY + SLOT_ICON_Y[slot];
 
@@ -245,9 +284,7 @@ public class AbilityBarOverlay implements IGuiOverlay {
         graphics.blit(texture, barX, barY, 0, 0, TEX_WIDTH, TEX_HEIGHT, TEX_WIDTH, TEX_HEIGHT);
 
         // Render ability icons (flipped via PoseStack)
-        int slotCount = showTransformationBar
-                ? SomniumPlayerData.TRANS_BAR_SIZE : SomniumPlayerData.BAR_SIZE;
-        for (int slot = 0; slot < slotCount; slot++) {
+        for (int slot = 0; slot < SomniumPlayerData.BAR_SIZE; slot++) {
             int iconX = barX + SLOT_ICON_X;
             int iconY = barY + SLOT_ICON_Y[slot];
             renderSlotContents(graphics, data, slot, iconX, iconY);
@@ -257,7 +294,7 @@ public class AbilityBarOverlay implements IGuiOverlay {
 
         // Render keybind labels OUTSIDE the flip transform (text stays readable)
         // When flipped, slot visual positions are reversed
-        for (int slot = 0; slot < slotCount; slot++) {
+        for (int slot = 0; slot < SomniumPlayerData.BAR_SIZE; slot++) {
             // Calculate where the slot appears after the flip
             int originalIconY = barY + SLOT_ICON_Y[slot];
             int flippedIconY = (int) (2 * centerY - originalIconY - ICON_SIZE);
@@ -274,9 +311,14 @@ public class AbilityBarOverlay implements IGuiOverlay {
      */
     private void renderSlotContents(GuiGraphics graphics, SomniumPlayerData data,
                                     int slot, int iconX, int iconY) {
-        AbilityInstance instance = showTransformationBar
-                ? data.getTransBarSlotInstance(slot)
-                : data.getBarSlotInstance(slot);
+        AbilityInstance instance;
+        if (activeCategoryBar != null) {
+            instance = data.getCategoryBarSlotInstance(activeCategoryBar, slot);
+        } else if (showTransformationBar) {
+            instance = data.getTransBarSlotInstance(slot);
+        } else {
+            instance = data.getBarSlotInstance(slot);
+        }
         if (instance == null) return;
 
         AbilityType type = instance.getAbilityType();

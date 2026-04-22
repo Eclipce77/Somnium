@@ -5,10 +5,13 @@ import net.eclipce.somnium.client.keybind.SomniumKeybinds;
 import net.eclipce.somnium.core.ability.AbilityInstance;
 import net.eclipce.somnium.core.data.SomniumPlayerData;
 import net.eclipce.somnium.network.ActivateAbilityPacket;
+import net.eclipce.somnium.network.QuickCategoryPacket;
 import net.eclipce.somnium.network.QuickTransformPacket;
 import net.eclipce.somnium.network.SomniumNetwork;
+import net.eclipce.somnium.test.TestContent;
 import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
+import net.minecraft.resources.ResourceLocation;
 import net.minecraftforge.api.distmarker.Dist;
 import net.minecraftforge.client.event.RegisterGuiOverlaysEvent;
 import net.minecraftforge.client.event.RegisterKeyMappingsEvent;
@@ -129,9 +132,8 @@ public class SomniumClientEvents {
 
             // Determine which bar slot keys target
             boolean transBarActive = AbilityBarOverlay.isShowingTransformationBar();
-            int barType = transBarActive ? 1 : 0;
-            int maxSlots = transBarActive
-                    ? SomniumPlayerData.TRANS_BAR_SIZE : SomniumPlayerData.BAR_SIZE;
+            ResourceLocation activeCatBar = AbilityBarOverlay.getActiveCategoryBar();
+            boolean catBarActive = activeCatBar != null;
 
             // Process ability slot keys — detect press/release transitions
             for (int slot = 0; slot < SomniumPlayerData.BAR_SIZE; slot++) {
@@ -139,15 +141,25 @@ public class SomniumClientEvents {
                 boolean wasDown = slotKeyHeld[slot];
 
                 if (isDown && !wasDown) {
-                    // Only send if slot is within the active bar's range
-                    if (slot < maxSlots) {
-                        SomniumNetwork.sendToServer(
-                                new ActivateAbilityPacket(slot, ActivateAbilityPacket.Action.PRESS, barType));
+                    if (catBarActive) {
+                        SomniumNetwork.sendToServer(new ActivateAbilityPacket(
+                                slot, ActivateAbilityPacket.Action.PRESS, activeCatBar));
+                        AbilityBarOverlay.hideCategoryBar();
+                    } else if (transBarActive) {
+                        SomniumNetwork.sendToServer(new ActivateAbilityPacket(
+                                slot, ActivateAbilityPacket.Action.PRESS, 1));
+                    } else {
+                        SomniumNetwork.sendToServer(new ActivateAbilityPacket(
+                                slot, ActivateAbilityPacket.Action.PRESS, 0));
                     }
                 } else if (!isDown && wasDown) {
-                    if (slot < maxSlots) {
-                        SomniumNetwork.sendToServer(
-                                new ActivateAbilityPacket(slot, ActivateAbilityPacket.Action.RELEASE, barType));
+                    // Release always goes to whichever bar was active on press
+                    if (transBarActive) {
+                        SomniumNetwork.sendToServer(new ActivateAbilityPacket(
+                                slot, ActivateAbilityPacket.Action.RELEASE, 1));
+                    } else {
+                        SomniumNetwork.sendToServer(new ActivateAbilityPacket(
+                                slot, ActivateAbilityPacket.Action.RELEASE, 0));
                     }
                 }
 
@@ -156,8 +168,8 @@ public class SomniumClientEvents {
 
             // Process utility keys
             if (SomniumKeybinds.PAGE_TOGGLE.consumeClick()) {
-                // Page toggle only applies when not showing transformation bar
-                if (!transBarActive && localData != null) {
+                // Page toggle only applies to ability bar
+                if (!transBarActive && !catBarActive && localData != null) {
                     int nextPage = (localData.getActivePage() + 1) % SomniumPlayerData.MAX_PAGES;
                     localData.setActivePage(nextPage);
                     SomniumNetwork.sendToServer(
@@ -174,11 +186,19 @@ public class SomniumClientEvents {
             // Transformation keybind
             if (SomniumKeybinds.TRANSFORMATION_QUICKBIND.consumeClick()) {
                 if (mc.player.isCrouching()) {
-                    // Crouching: quick-bind — activate/deactivate most recent
                     SomniumNetwork.sendToServer(new QuickTransformPacket());
                 } else {
-                    // Not crouching: toggle transformation bar visibility
                     AbilityBarOverlay.toggleTransformationBar();
+                }
+            }
+
+            // Utility bar keybind (test content — demonstrates addon pattern)
+            if (SomniumKeybinds.UTILITY_BAR.consumeClick()) {
+                if (mc.player.isCrouching()) {
+                    SomniumNetwork.sendToServer(
+                            new QuickCategoryPacket(TestContent.UTILITY.getId()));
+                } else {
+                    AbilityBarOverlay.toggleCategoryBar(TestContent.UTILITY.getId());
                 }
             }
         }

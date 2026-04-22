@@ -1,8 +1,10 @@
 package net.eclipce.somnium.core.ability;
 
+import net.eclipce.somnium.core.category.AbilityCategory;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceLocation;
 
+import javax.annotation.Nullable;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.Set;
@@ -57,6 +59,8 @@ public class AbilityType {
     private final boolean defaultEnabled;
     private final ResourceLocation icon;
     private final Set<ResourceLocation> conflictTags;
+    @Nullable
+    private final AbilityCategory category;
 
     /**
      * Creates an AbilityType with the given properties.
@@ -71,6 +75,7 @@ public class AbilityType {
         this.defaultEnabled = properties.defaultEnabled;
         this.icon = properties.icon;
         this.conflictTags = Collections.unmodifiableSet(new HashSet<>(properties.conflictTags));
+        this.category = properties.category;
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -370,6 +375,16 @@ public class AbilityType {
         return activationType.isBarEquippable();
     }
 
+    /**
+     * @return the custom category this ability belongs to, or {@code null}
+     *         if it's a standard ability (shown in the Abilities tab).
+     *         Abilities with a category appear in that category's dedicated tab.
+     */
+    @Nullable
+    public AbilityCategory getCategory() {
+        return category;
+    }
+
     // ═══════════════════════════════════════════════════════════════════
     //  Properties builder
     // ═══════════════════════════════════════════════════════════════════
@@ -395,6 +410,7 @@ public class AbilityType {
         boolean defaultEnabled = false;
         ResourceLocation icon = null;
         Set<ResourceLocation> conflictTags = new HashSet<>();
+        @Nullable AbilityCategory category = null;
 
         /**
          * Sets the activation type. Defaults to {@link ActivationType#INSTANT}.
@@ -461,6 +477,19 @@ public class AbilityType {
          */
         public Properties conflictTag(ResourceLocation tag) {
             this.conflictTags.add(tag);
+            return this;
+        }
+
+        /**
+         * Assigns this ability to a custom category. Abilities with a category
+         * appear in that category's dedicated inventory tab and can only be
+         * equipped to that category's bar.
+         *
+         * @param category the custom category to assign to
+         * @see AbilityCategory
+         */
+        public Properties category(AbilityCategory category) {
+            this.category = category;
             return this;
         }
     }

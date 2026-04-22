@@ -6,6 +6,7 @@ import net.eclipce.somnium.core.ability.AbilityType;
 import net.eclipce.somnium.core.ability.ActivationType;
 import net.eclipce.somnium.core.data.SomniumCapability;
 import net.eclipce.somnium.core.data.SomniumPlayerData;
+import net.eclipce.somnium.core.registry.SomniumRegistries;
 import net.eclipce.somnium.core.unlock.ProgressionHandler;
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.resources.ResourceLocation;
@@ -59,42 +60,50 @@ public class ActivateAbilityPacket {
 
     private final int slot;
     private final Action action;
-    private final int barType; // 0 = ability bar, 1 = transformation bar
+    private final int barType; // 0 = ability bar, 1 = transformation bar, 2 = category bar
+    private final String categoryId; // only used when barType == 2
 
     /**
      * Creates an activation packet for the ability bar.
-     *
-     * @param slot   the bar slot index (0-5)
-     * @param action whether this is a press or release
      */
     public ActivateAbilityPacket(int slot, Action action) {
-        this(slot, action, 0);
+        this(slot, action, 0, "");
     }
 
     /**
-     * Creates an activation packet for a specific bar.
-     *
-     * @param slot    the bar slot index
-     * @param action  whether this is a press or release
-     * @param barType 0 for ability bar, 1 for transformation bar
+     * Creates an activation packet for a specific bar (ability or transformation).
      */
     public ActivateAbilityPacket(int slot, Action action, int barType) {
+        this(slot, action, barType, "");
+    }
+
+    /**
+     * Creates an activation packet for a custom category bar.
+     */
+    public ActivateAbilityPacket(int slot, Action action, ResourceLocation categoryId) {
+        this(slot, action, 2, categoryId.toString());
+    }
+
+    private ActivateAbilityPacket(int slot, Action action, int barType, String categoryId) {
         this.slot = slot;
         this.action = action;
         this.barType = barType;
+        this.categoryId = categoryId;
     }
 
     public void encode(FriendlyByteBuf buf) {
         buf.writeVarInt(slot);
         buf.writeVarInt(action.ordinal());
         buf.writeVarInt(barType);
+        buf.writeUtf(categoryId);
     }
 
     public static ActivateAbilityPacket decode(FriendlyByteBuf buf) {
         int slot = buf.readVarInt();
         Action action = Action.fromOrdinal(buf.readVarInt());
         int barType = buf.readVarInt();
-        return new ActivateAbilityPacket(slot, action, barType);
+        String categoryId = buf.readUtf(256);
+        return new ActivateAbilityPacket(slot, action, barType, categoryId);
     }
 
     /**
@@ -112,7 +121,12 @@ public class ActivateAbilityPacket {
 
             // Route to correct bar
             AbilityInstance instance;
-            if (barType == 1) {
+            if (barType == 2 && !categoryId.isEmpty()) {
+                // Custom category bar
+                ResourceLocation catKey = new ResourceLocation(categoryId);
+                if (slot < 0 || slot >= SomniumPlayerData.BAR_SIZE) return;
+                instance = data.getCategoryBarSlotInstance(catKey, slot);
+            } else if (barType == 1) {
                 if (slot < 0 || slot >= SomniumPlayerData.TRANS_BAR_SIZE) return;
                 instance = data.getTransBarSlotInstance(slot);
             } else {
@@ -129,6 +143,15 @@ public class ActivateAbilityPacket {
             switch (action) {
                 case PRESS -> handlePress(abilityType, activationType, instance, activationCtx, data);
                 case RELEASE -> handleRelease(abilityType, activationType, instance, activationCtx);
+            }
+
+            // Track most recent for category quick-bind
+            if (barType == 2 && !categoryId.isEmpty() && action == Action.PRESS) {
+                ResourceLocation catKey = new ResourceLocation(categoryId);
+                ResourceLocation abilityKey = SomniumRegistries.getAbilityKey(abilityType);
+                if (abilityKey != null) {
+                    data.setMostRecentCategoryAbility(catKey, abilityKey);
+                }
             }
 
             data.markDirty();
@@ -166,7 +189,7 @@ public class ActivateAbilityPacket {
                         ProgressionHandler.onAbilityActivated(ctx.getPlayer(), type);
                         // Track most recent transformation
                         if (type instanceof net.eclipce.somnium.core.ability.transformation.TransformationAbilityType) {
-                            ResourceLocation transKey = net.eclipce.somnium.core.registry.SomniumRegistries.getAbilityKey(type);
+                            ResourceLocation transKey = SomniumRegistries.getAbilityKey(type);
                             data.setMostRecentTransformation(transKey);
                         }
                     }

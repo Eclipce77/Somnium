@@ -605,6 +605,12 @@ public class TransformationAbilityType extends AbilityType {
             return this;
         }
 
+        @Override
+        public TransformationProperties category(net.eclipce.somnium.core.category.AbilityCategory category) {
+            super.category(category);
+            return this;
+        }
+
         // Note: activationType is NOT overridden — transformations are always TOGGLE.
         // Note: defaultEnabled is NOT overridden — not relevant for transformations.
     }

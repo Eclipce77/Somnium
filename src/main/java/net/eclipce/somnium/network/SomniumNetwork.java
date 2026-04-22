@@ -117,6 +117,12 @@ public final class SomniumNetwork {
                 .consumerMainThread(QuickTransformPacket::handle)
                 .add();
 
+        CHANNEL.messageBuilder(QuickCategoryPacket.class, packetId++, NetworkDirection.PLAY_TO_SERVER)
+                .encoder(QuickCategoryPacket::encode)
+                .decoder(QuickCategoryPacket::decode)
+                .consumerMainThread(QuickCategoryPacket::handle)
+                .add();
+
         Somnium.LOGGER.debug("Somnium network channel initialized with {} packet types", packetId);
     }
 

@@ -9,6 +9,7 @@ import net.eclipce.somnium.core.ability.transformation.TransformationAbilityType
 import net.eclipce.somnium.core.category.AbilityCategory;
 import net.eclipce.somnium.core.data.SomniumPlayerData;
 import net.eclipce.somnium.core.power.Power;
+import net.eclipce.somnium.core.prerequisite.Prerequisite;
 import net.eclipce.somnium.core.registry.SomniumRegistries;
 import net.eclipce.somnium.network.RequestSyncPacket;
 import net.eclipce.somnium.network.SomniumNetwork;
@@ -242,7 +243,14 @@ public class AbilityInventoryScreen extends Screen {
             Power power = powers.get(selectedPowerTab);
             AbilityCategory selectedCat = getSelectedCategory();
 
-            for (AbilityType type : power.getAbilityTypes()) {
+            for (Power.PowerAbilityEntry entry : power.getEntries()) {
+                AbilityType type = entry.getAbilityType();
+                if (type == null) continue;
+
+                // Check prerequisite — if unmet, ability is completely hidden
+                Prerequisite prereq = entry.getPrerequisite();
+                if (prereq != null && !prereq.isMet(data)) continue;
+
                 if (selectedCat != null) {
                     // Custom category mode: show only abilities with matching category
                     if (type.getCategory() == selectedCat) {

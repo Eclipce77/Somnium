@@ -88,6 +88,7 @@ public class SomniumPlayerData {
     private static final String TAG_CATEGORY_ID = "CategoryId";
     private static final String TAG_CATEGORY_SLOTS = "Slots";
     private static final String TAG_MOST_RECENT_CATEGORY = "MostRecentCategory";
+    private static final String TAG_PLAYER_TAGS = "PlayerTags";
 
     // ═══════════════════════════════════════════════════════════════════
     //  Fields
@@ -161,6 +162,11 @@ public class SomniumPlayerData {
      * Most recently activated ability per category, for quick-bind support.
      */
     private final Map<ResourceLocation, ResourceLocation> mostRecentCategoryAbility = new LinkedHashMap<>();
+
+    /**
+     * Tags assigned to this player. Used for power gating and auto-granting.
+     */
+    private final Set<ResourceLocation> playerTags = new LinkedHashSet<>();
 
     /**
      * Per-ability-per-power progression data. Keys are composite strings
@@ -772,6 +778,46 @@ public class SomniumPlayerData {
     }
 
     // ═══════════════════════════════════════════════════════════════════
+    //  Player tags
+    // ═══════════════════════════════════════════════════════════════════
+
+    /**
+     * Adds a tag to this player. Does not trigger auto-grant processing —
+     * use {@link net.eclipce.somnium.core.tag.TagHandler#addTag} for that.
+     *
+     * @param tag the tag to add
+     * @return true if the tag was newly added
+     */
+    public boolean addTag(ResourceLocation tag) {
+        boolean added = playerTags.add(tag);
+        if (added) markDirty();
+        return added;
+    }
+
+    /**
+     * Removes a tag from this player. Does not trigger auto-revoke processing —
+     * use {@link net.eclipce.somnium.core.tag.TagHandler#removeTag} for that.
+     *
+     * @param tag the tag to remove
+     * @return true if the tag was present and removed
+     */
+    public boolean removeTag(ResourceLocation tag) {
+        boolean removed = playerTags.remove(tag);
+        if (removed) markDirty();
+        return removed;
+    }
+
+    /** @return true if the player has the specified tag */
+    public boolean hasTag(ResourceLocation tag) {
+        return playerTags.contains(tag);
+    }
+
+    /** @return an unmodifiable view of all tags on this player */
+    public Set<ResourceLocation> getTags() {
+        return java.util.Collections.unmodifiableSet(playerTags);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
     //  Unlock progress tracking
     // ═══════════════════════════════════════════════════════════════════
 
@@ -948,6 +994,9 @@ public class SomniumPlayerData {
         this.mostRecentCategoryAbility.clear();
         this.mostRecentCategoryAbility.putAll(source.mostRecentCategoryAbility);
 
+        this.playerTags.clear();
+        this.playerTags.addAll(source.playerTags);
+
         this.unlockProgress.clear();
         for (Map.Entry<String, CompoundTag> entry : source.unlockProgress.entrySet()) {
             this.unlockProgress.put(entry.getKey(), entry.getValue().copy());
@@ -1086,6 +1135,13 @@ public class SomniumPlayerData {
             mostRecentCatTag.add(catTag);
         }
         root.put(TAG_MOST_RECENT_CATEGORY, mostRecentCatTag);
+
+        // Player tags
+        ListTag tagsTag = new ListTag();
+        for (ResourceLocation tag : playerTags) {
+            tagsTag.add(net.minecraft.nbt.StringTag.valueOf(tag.toString()));
+        }
+        root.put(TAG_PLAYER_TAGS, tagsTag);
 
         // Unlock progress — list of {Key, Data} entries
         ListTag progressTag = new ListTag();
@@ -1241,17 +1297,23 @@ public class SomniumPlayerData {
             }
         }
 
+        // Player tags
+        playerTags.clear();
+        if (root.contains(TAG_PLAYER_TAGS)) {
+            ListTag tagsTag = root.getList(TAG_PLAYER_TAGS, Tag.TAG_STRING);
+            for (int i = 0; i < tagsTag.size(); i++) {
+                playerTags.add(new ResourceLocation(tagsTag.getString(i)));
+            }
+        }
+
         // Unlock progress
-        unlockProgress.clear();
-        if (root.contains(TAG_UNLOCK_PROGRESS)) {
-            ListTag progressTag = root.getList(TAG_UNLOCK_PROGRESS, Tag.TAG_COMPOUND);
-            for (int i = 0; i < progressTag.size(); i++) {
-                CompoundTag progressEntry = progressTag.getCompound(i);
-                String key = progressEntry.getString(TAG_PROGRESS_KEY);
-                CompoundTag data = progressEntry.getCompound(TAG_PROGRESS_DATA);
-                if (!key.isEmpty()) {
-                    unlockProgress.put(key, data.copy());
-                }
+        ListTag progressTag = root.getList(TAG_UNLOCK_PROGRESS, Tag.TAG_COMPOUND);
+        for (int i = 0; i < progressTag.size(); i++) {
+            CompoundTag progressEntry = progressTag.getCompound(i);
+            String key = progressEntry.getString(TAG_PROGRESS_KEY);
+            CompoundTag data = progressEntry.getCompound(TAG_PROGRESS_DATA);
+            if (!key.isEmpty()) {
+                unlockProgress.put(key, data.copy());
             }
         }
     }

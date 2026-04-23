@@ -2,6 +2,7 @@ package net.eclipce.somnium.core.power;
 
 import net.eclipce.somnium.core.ability.AbilityType;
 import net.eclipce.somnium.core.ability.ActivationType;
+import net.eclipce.somnium.core.prerequisite.Prerequisite;
 import net.eclipce.somnium.core.unlock.UnlockCondition;
 import net.eclipce.somnium.core.unlock.conditions.AlwaysUnlocked;
 import net.minecraft.network.chat.Component;
@@ -57,6 +58,10 @@ public class Power {
     private final boolean persistOnDeath;
     private final boolean progressionEnabled;
     private final List<PowerAbilityEntry> entries;
+    @Nullable
+    private final ResourceLocation autoGrantTag;
+    @Nullable
+    private final ResourceLocation requiredTag;
 
     // ═══════════════════════════════════════════════════════════════════
     //  Construction (use Builder)
@@ -68,6 +73,8 @@ public class Power {
         this.persistOnDeath = builder.persistOnDeath;
         this.progressionEnabled = builder.progressionEnabled;
         this.entries = Collections.unmodifiableList(new ArrayList<>(builder.entries));
+        this.autoGrantTag = builder.autoGrantTag;
+        this.requiredTag = builder.requiredTag;
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -105,6 +112,24 @@ public class Power {
      */
     public boolean isProgressionEnabled() {
         return progressionEnabled;
+    }
+
+    /**
+     * @return the tag that auto-grants this power when added to a player,
+     *         or {@code null} if no auto-grant tag is set
+     */
+    @Nullable
+    public ResourceLocation getAutoGrantTag() {
+        return autoGrantTag;
+    }
+
+    /**
+     * @return the tag that must be present before this power can be granted,
+     *         or {@code null} if no requirement
+     */
+    @Nullable
+    public ResourceLocation getRequiredTag() {
+        return requiredTag;
     }
 
     /**
@@ -184,20 +209,16 @@ public class Power {
         private boolean persistOnDeath = true;
         private boolean progressionEnabled = true;
         private final List<PowerAbilityEntry> entries = new ArrayList<>();
+        private ResourceLocation autoGrantTag = null;
+        private ResourceLocation requiredTag = null;
 
         private Builder() {}
 
-        /**
-         * Sets the display name shown on the power's inventory tab.
-         */
         public Builder displayName(Component name) {
             this.displayName = name;
             return this;
         }
 
-        /**
-         * Sets the icon texture for the power's inventory tab.
-         */
         public Builder icon(ResourceLocation icon) {
             this.icon = icon;
             return this;
@@ -223,53 +244,81 @@ public class Power {
         }
 
         /**
-         * Adds an ability with {@link AlwaysUnlocked} and no passive override.
-         * The ability is available immediately when the power is granted.
+         * Sets a tag that automatically grants this power when added to a player.
+         * When the tag is removed, the power is automatically revoked.
          *
-         * @param abilitySupplier a supplier for the ability type
+         * @param tag the auto-grant tag
          */
-        public Builder ability(Supplier<AbilityType> abilitySupplier) {
-            entries.add(new PowerAbilityEntry(abilitySupplier, null, null));
+        public Builder autoGrantTag(ResourceLocation tag) {
+            this.autoGrantTag = tag;
             return this;
         }
 
         /**
-         * Adds an ability with a passive default override and no unlock condition.
-         * The ability is available immediately when the power is granted.
+         * Sets a tag that must be present before this power can be granted.
+         * If the player doesn't have this tag, grant attempts are rejected.
          *
-         * @param abilitySupplier       a supplier for the ability type
-         * @param defaultEnabledOverride passive default override
+         * @param tag the required tag
          */
+        public Builder requiredTag(ResourceLocation tag) {
+            this.requiredTag = tag;
+            return this;
+        }
+
+        /** Adds an ability with no conditions (immediate unlock). */
+        public Builder ability(Supplier<AbilityType> abilitySupplier) {
+            entries.add(new PowerAbilityEntry(abilitySupplier, null, null, null));
+            return this;
+        }
+
+        /** Adds an ability with a passive default override. */
         public Builder ability(Supplier<AbilityType> abilitySupplier,
                                @Nullable Boolean defaultEnabledOverride) {
-            entries.add(new PowerAbilityEntry(abilitySupplier, defaultEnabledOverride, null));
+            entries.add(new PowerAbilityEntry(abilitySupplier, defaultEnabledOverride, null, null));
             return this;
         }
 
-        /**
-         * Adds an ability with an unlock condition.
-         * The ability is locked until the condition is met.
-         *
-         * @param abilitySupplier a supplier for the ability type
-         * @param condition       the unlock condition
-         */
+        /** Adds an ability with an unlock condition. */
         public Builder ability(Supplier<AbilityType> abilitySupplier,
                                UnlockCondition condition) {
-            entries.add(new PowerAbilityEntry(abilitySupplier, null, condition));
+            entries.add(new PowerAbilityEntry(abilitySupplier, null, condition, null));
             return this;
         }
 
-        /**
-         * Adds an ability with both an unlock condition and a passive default override.
-         *
-         * @param abilitySupplier       a supplier for the ability type
-         * @param condition             the unlock condition
-         * @param defaultEnabledOverride passive default override
-         */
+        /** Adds an ability with an unlock condition and passive default override. */
         public Builder ability(Supplier<AbilityType> abilitySupplier,
                                UnlockCondition condition,
                                @Nullable Boolean defaultEnabledOverride) {
-            entries.add(new PowerAbilityEntry(abilitySupplier, defaultEnabledOverride, condition));
+            entries.add(new PowerAbilityEntry(abilitySupplier, defaultEnabledOverride, condition, null));
+            return this;
+        }
+
+        /**
+         * Adds an ability with a prerequisite (visibility gate).
+         * The ability is completely hidden until the prerequisite is met.
+         *
+         * @param abilitySupplier a supplier for the ability type
+         * @param prerequisite    the visibility gate
+         */
+        public Builder ability(Supplier<AbilityType> abilitySupplier,
+                               Prerequisite prerequisite) {
+            entries.add(new PowerAbilityEntry(abilitySupplier, null, null, prerequisite));
+            return this;
+        }
+
+        /**
+         * Adds an ability with both a prerequisite and an unlock condition.
+         * The ability is hidden until the prerequisite is met, then locked
+         * until the unlock condition is met.
+         *
+         * @param abilitySupplier a supplier for the ability type
+         * @param prerequisite    the visibility gate
+         * @param condition       the unlock condition (applied after prerequisite is met)
+         */
+        public Builder ability(Supplier<AbilityType> abilitySupplier,
+                               Prerequisite prerequisite,
+                               UnlockCondition condition) {
+            entries.add(new PowerAbilityEntry(abilitySupplier, null, condition, prerequisite));
             return this;
         }
 
@@ -306,41 +355,32 @@ public class Power {
         private final Boolean defaultEnabledOverride;
         @Nullable
         private final UnlockCondition unlockCondition;
+        @Nullable
+        private final Prerequisite prerequisite;
 
         /**
          * Creates a new entry.
          *
          * @param abilitySupplier       supplier for the ability type
          * @param defaultEnabledOverride passive default override, or {@code null}
-         *                               to use the ability's own default
-         * @param unlockCondition        the condition to unlock this ability,
-         *                               or {@code null} for immediate unlock
+         * @param unlockCondition        the condition to unlock, or {@code null} for immediate
+         * @param prerequisite           visibility gate, or {@code null} for always visible
          */
         public PowerAbilityEntry(Supplier<AbilityType> abilitySupplier,
                                  @Nullable Boolean defaultEnabledOverride,
-                                 @Nullable UnlockCondition unlockCondition) {
+                                 @Nullable UnlockCondition unlockCondition,
+                                 @Nullable Prerequisite prerequisite) {
             this.abilitySupplier = abilitySupplier;
             this.defaultEnabledOverride = defaultEnabledOverride;
             this.unlockCondition = unlockCondition;
+            this.prerequisite = prerequisite;
         }
 
-        /**
-         * @return the ability type, resolved from the supplier. May return
-         *         {@code null} if the supplier fails (shouldn't happen after
-         *         registry loading is complete).
-         */
         @Nullable
         public AbilityType getAbilityType() {
             return abilitySupplier.get();
         }
 
-        /**
-         * Returns the effective default enabled state for a passive ability
-         * within this power. If an override was specified, it takes priority
-         * over the ability's own default.
-         *
-         * @return the effective default enabled state
-         */
         public boolean getEffectiveDefaultEnabled() {
             AbilityType type = getAbilityType();
             if (defaultEnabledOverride != null) {
@@ -349,28 +389,25 @@ public class Power {
             return type != null ? type.isDefaultEnabled() : false;
         }
 
-        /**
-         * @return the passive default override, or {@code null} if the ability's
-         *         own default should be used
-         */
         @Nullable
         public Boolean getDefaultEnabledOverride() {
             return defaultEnabledOverride;
         }
 
-        /**
-         * @return the unlock condition for this ability within this power,
-         *         or {@code null} if the ability unlocks immediately
-         */
         @Nullable
         public UnlockCondition getUnlockCondition() {
             return unlockCondition;
         }
 
         /**
-         * @return {@code true} if this ability has a non-trivial unlock condition
-         *         (i.e., not null and not AlwaysUnlocked)
+         * @return the prerequisite visibility gate, or {@code null} if
+         *         the ability is always visible (may still be locked)
          */
+        @Nullable
+        public Prerequisite getPrerequisite() {
+            return prerequisite;
+        }
+
         public boolean hasProgressionCondition() {
             return unlockCondition != null
                     && !(unlockCondition instanceof AlwaysUnlocked);

@@ -10,6 +10,7 @@ import net.eclipce.somnium.core.data.SomniumCapability;
 import net.eclipce.somnium.core.data.SomniumPlayerData;
 import net.eclipce.somnium.core.power.Power;
 import net.eclipce.somnium.core.registry.SomniumRegistries;
+import net.eclipce.somnium.core.tag.TagHandler;
 import net.eclipce.somnium.core.unlock.ProgressionHandler;
 import net.eclipce.somnium.core.unlock.UnlockCondition;
 import net.eclipce.somnium.network.SomniumNetwork;
@@ -112,6 +113,7 @@ public final class SomniumCommand {
                         .then(buildPowerCommands())
                         .then(buildAbilityCommands())
                         .then(buildPlayerCommands())
+                        .then(buildTagCommands())
         );
     }
 
@@ -160,6 +162,15 @@ public final class SomniumCommand {
                     .append(Component.literal(powerKey.toString())
                             .withStyle(ChatFormatting.GOLD)));
             return 0;
+        }
+
+        // Check required tag (commands bypass with a warning)
+        if (!TagHandler.meetsRequiredTag(data, power)) {
+            ResourceLocation reqTag = power.getRequiredTag();
+            context.getSource().sendSuccess(() -> Component.literal("Warning: ")
+                    .withStyle(ChatFormatting.YELLOW)
+                    .append(Component.literal("Power requires tag " + reqTag
+                            + " — granting anyway via command.")), false);
         }
 
         data.grantPower(power);
@@ -559,6 +570,105 @@ public final class SomniumCommand {
                         .withStyle(ChatFormatting.GOLD))
                 .append(" for ")
                 .append(player.getDisplayName()), true);
+        return 1;
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    //  /somnium tag
+    // ═══════════════════════════════════════════════════════════════════
+
+    private static com.mojang.brigadier.builder.LiteralArgumentBuilder<CommandSourceStack>
+    buildTagCommands() {
+        return Commands.literal("tag")
+                .then(Commands.literal("add")
+                        .then(Commands.argument("player", EntityArgument.player())
+                                .then(Commands.argument("tag", ResourceLocationArgument.id())
+                                        .executes(SomniumCommand::tagAdd))))
+                .then(Commands.literal("remove")
+                        .then(Commands.argument("player", EntityArgument.player())
+                                .then(Commands.argument("tag", ResourceLocationArgument.id())
+                                        .executes(SomniumCommand::tagRemove))))
+                .then(Commands.literal("list")
+                        .then(Commands.argument("player", EntityArgument.player())
+                                .executes(SomniumCommand::tagList)));
+    }
+
+    private static int tagAdd(CommandContext<CommandSourceStack> context)
+            throws CommandSyntaxException {
+        ServerPlayer player = EntityArgument.getPlayer(context, "player");
+        ResourceLocation tag = ResourceLocationArgument.getId(context, "tag");
+
+        boolean added = TagHandler.addTag(player, tag);
+
+        if (added) {
+            context.getSource().sendSuccess(() -> Component.literal("Added tag ")
+                    .append(Component.literal(tag.toString())
+                            .withStyle(ChatFormatting.GREEN))
+                    .append(" to ")
+                    .append(player.getDisplayName()), true);
+            return 1;
+        } else {
+            context.getSource().sendFailure(Component.literal("")
+                    .append(player.getDisplayName())
+                    .append(" already has tag ")
+                    .append(Component.literal(tag.toString())
+                            .withStyle(ChatFormatting.GREEN)));
+            return 0;
+        }
+    }
+
+    private static int tagRemove(CommandContext<CommandSourceStack> context)
+            throws CommandSyntaxException {
+        ServerPlayer player = EntityArgument.getPlayer(context, "player");
+        ResourceLocation tag = ResourceLocationArgument.getId(context, "tag");
+
+        boolean removed = TagHandler.removeTag(player, tag);
+
+        if (removed) {
+            context.getSource().sendSuccess(() -> Component.literal("Removed tag ")
+                    .append(Component.literal(tag.toString())
+                            .withStyle(ChatFormatting.GREEN))
+                    .append(" from ")
+                    .append(player.getDisplayName()), true);
+            return 1;
+        } else {
+            context.getSource().sendFailure(Component.literal("")
+                    .append(player.getDisplayName())
+                    .append(" does not have tag ")
+                    .append(Component.literal(tag.toString())
+                            .withStyle(ChatFormatting.GREEN)));
+            return 0;
+        }
+    }
+
+    private static int tagList(CommandContext<CommandSourceStack> context)
+            throws CommandSyntaxException {
+        ServerPlayer player = EntityArgument.getPlayer(context, "player");
+        SomniumPlayerData data = SomniumCapability.get(player);
+
+        if (data == null) {
+            context.getSource().sendFailure(
+                    Component.literal("Could not access player data."));
+            return 0;
+        }
+
+        var tags = data.getTags();
+        context.getSource().sendSuccess(() -> Component.literal("=== Tags for ")
+                .append(player.getDisplayName())
+                .append(" ===")
+                .withStyle(ChatFormatting.GREEN), false);
+
+        if (tags.isEmpty()) {
+            context.getSource().sendSuccess(() -> Component.literal("  No tags.")
+                    .withStyle(ChatFormatting.GRAY), false);
+        } else {
+            for (ResourceLocation tag : tags) {
+                context.getSource().sendSuccess(() -> Component.literal("  - ")
+                        .append(Component.literal(tag.toString())
+                                .withStyle(ChatFormatting.GREEN)), false);
+            }
+        }
+
         return 1;
     }
 

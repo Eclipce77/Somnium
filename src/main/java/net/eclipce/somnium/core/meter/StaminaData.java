@@ -41,9 +41,8 @@ public class StaminaData {
     // ═══════════════════════════════════════════════════════════════════
 
     public static final float DEFAULT_MAX = 100f;
-    public static final float DEFAULT_REGEN_RATE = 0.05f; // 1/sec, ~100s full regen
+    public static final float DEFAULT_REGEN_RATE = 0.028f; // ~3 minutes 0→100
     public static final int DEFAULT_REGEN_DELAY = 60;     // 3 seconds
-    public static final float OVERUSE_REGEN_MULTIPLIER = 0.1f; // 10x slower
     public static final int MAX_OVERUSE_STAGE = 5;
 
     /** Ticks per minute. */
@@ -274,7 +273,9 @@ public class StaminaData {
             if (regenCooldown >= regenDelay) {
                 float rate = regenRate;
                 if (inOveruse) {
-                    rate *= OVERUSE_REGEN_MULTIPLIER;
+                    // Regen slows by 2x per stage (Stage 1 = 2x slower, Stage 2 = 4x, etc.)
+                    float overuseMultiplier = 1.0f / (overuseStage * 2);
+                    rate *= overuseMultiplier;
                 }
                 currentValue += rate;
                 if (currentValue > maxValue) currentValue = maxValue;
@@ -298,7 +299,10 @@ public class StaminaData {
         if (currentValue < maxValue && regenHaltTimer <= 0) {
             if (regenCooldown >= regenDelay) {
                 float rate = regenRate;
-                if (inOveruse) rate *= OVERUSE_REGEN_MULTIPLIER;
+                if (inOveruse) {
+                    float overuseMultiplier = 1.0f / (overuseStage * 2);
+                    rate *= overuseMultiplier;
+                }
                 currentValue += rate;
                 if (currentValue > maxValue) currentValue = maxValue;
             } else {
@@ -315,8 +319,6 @@ public class StaminaData {
         CompoundTag tag = new CompoundTag();
         tag.putFloat("Value", currentValue);
         tag.putFloat("Max", maxValue);
-        tag.putFloat("RegenRate", regenRate);
-        tag.putInt("RegenDelay", regenDelay);
         tag.putInt("RegenCooldown", regenCooldown);
         tag.putFloat("DrainModifier", drainModifier);
         tag.putBoolean("InOveruse", inOveruse);
@@ -330,8 +332,7 @@ public class StaminaData {
         StaminaData data = new StaminaData();
         data.currentValue = tag.getFloat("Value");
         data.maxValue = tag.getFloat("Max");
-        data.regenRate = tag.getFloat("RegenRate");
-        data.regenDelay = tag.getInt("RegenDelay");
+        // regenRate and regenDelay always come from constants — not saved
         data.regenCooldown = tag.getInt("RegenCooldown");
         data.drainModifier = tag.contains("DrainModifier")
                 ? tag.getFloat("DrainModifier") : 1.0f;
@@ -345,8 +346,7 @@ public class StaminaData {
     public void copyFrom(StaminaData source) {
         this.currentValue = source.currentValue;
         this.maxValue = source.maxValue;
-        this.regenRate = source.regenRate;
-        this.regenDelay = source.regenDelay;
+        // regenRate and regenDelay always come from constants
         this.regenCooldown = source.regenCooldown;
         this.drainModifier = source.drainModifier;
         this.inOveruse = source.inOveruse;

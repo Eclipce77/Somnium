@@ -1,5 +1,8 @@
 package net.eclipce.somnium.client.config;
 
+import net.eclipce.somnium.client.AbilityBarOverlay;
+import net.eclipce.somnium.client.MeterOverlay;
+import net.eclipce.somnium.client.config.BarPosition;
 import net.minecraftforge.common.ForgeConfigSpec;
 
 /**
@@ -11,6 +14,10 @@ import net.minecraftforge.common.ForgeConfigSpec;
  *
  * <p>Settings are accessible via the static fields after config loading.
  * The config file is located at {@code config/somnium-client.toml}.</p>
+ *
+ * <p>Pixel-level offset values for the bar and meter positions are
+ * defined as constants in {@link AbilityBarOverlay} and {@link MeterOverlay}
+ * for easy adjustment during development.</p>
  */
 public class SomniumClientConfig {
 
@@ -21,18 +28,6 @@ public class SomniumClientConfig {
      * Options: BOTTOM_RIGHT (default), BOTTOM_LEFT, TOP_RIGHT, TOP_LEFT.
      */
     public static final ForgeConfigSpec.EnumValue<BarPosition> BAR_POSITION;
-
-    /**
-     * Horizontal offset in pixels from the screen edge.
-     * Allows fine-tuning the bar position.
-     */
-    public static final ForgeConfigSpec.IntValue BAR_OFFSET_X;
-
-    /**
-     * Vertical offset in pixels from the screen edge.
-     * Allows fine-tuning the bar position.
-     */
-    public static final ForgeConfigSpec.IntValue BAR_OFFSET_Y;
 
     static {
         ForgeConfigSpec.Builder builder = new ForgeConfigSpec.Builder();
@@ -45,16 +40,6 @@ public class SomniumClientConfig {
                         "BOTTOM_RIGHT (default), BOTTOM_LEFT, TOP_RIGHT, TOP_LEFT.",
                         "When on top, the bar texture is flipped vertically.")
                 .defineEnum("position", BarPosition.BOTTOM_RIGHT);
-
-        BAR_OFFSET_X = builder
-                .comment("Horizontal offset in pixels from the screen edge.",
-                        "Positive values move the bar inward from the edge.")
-                .defineInRange("offsetX", 2, 0, 200);
-
-        BAR_OFFSET_Y = builder
-                .comment("Vertical offset in pixels from the screen edge.",
-                        "Positive values move the bar inward from the edge.")
-                .defineInRange("offsetY", 2, 0, 200);
 
         builder.pop();
 

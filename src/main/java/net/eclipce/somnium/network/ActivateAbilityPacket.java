@@ -169,25 +169,24 @@ public class ActivateAbilityPacket {
                                     SomniumPlayerData data) {
         switch (activation) {
             case INSTANT -> {
-                if (type.canActivate(ctx)) {
+                if (type.canActivate(ctx) && type.canAffordMeterCosts(data)) {
                     type.onActivate(ctx);
                     type.applyCosts(ctx);
+                    type.applyMeterCosts(data);
                     ProgressionHandler.onAbilityActivated(ctx.getPlayer(), type);
                 }
             }
             case TOGGLE -> {
                 if (instance.isActive()) {
-                    // Currently active — deactivate
                     type.onDeactivate(ctx);
                     instance.setActive(false);
                 } else {
-                    // Currently inactive — activate
-                    if (type.canActivate(ctx)) {
+                    if (type.canActivate(ctx) && type.canAffordMeterCosts(data)) {
                         type.onActivate(ctx);
                         type.applyCosts(ctx);
+                        type.applyMeterCosts(data);
                         instance.setActive(true);
                         ProgressionHandler.onAbilityActivated(ctx.getPlayer(), type);
-                        // Track most recent transformation
                         if (type instanceof net.eclipce.somnium.core.ability.transformation.TransformationAbilityType) {
                             ResourceLocation transKey = SomniumRegistries.getAbilityKey(type);
                             data.setMostRecentTransformation(transKey);
@@ -196,16 +195,18 @@ public class ActivateAbilityPacket {
                 }
             }
             case HOLD -> {
-                if (type.canActivate(ctx)) {
+                if (type.canActivate(ctx) && type.canAffordMeterCosts(data)) {
                     type.onKeyDown(ctx);
+                    type.applyMeterCosts(data);
                     instance.setActive(true);
                     instance.resetChargeTicks();
                     ProgressionHandler.onAbilityActivated(ctx.getPlayer(), type);
                 }
             }
             case CHARGED -> {
-                if (type.canActivate(ctx)) {
+                if (type.canActivate(ctx) && type.canAffordMeterCosts(data)) {
                     type.onChargeStart(ctx);
+                    type.applyMeterCosts(data);
                     instance.setActive(true);
                     instance.resetChargeTicks();
                     ProgressionHandler.onAbilityActivated(ctx.getPlayer(), type);

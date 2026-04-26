@@ -61,6 +61,9 @@ public class AbilityType {
     private final Set<ResourceLocation> conflictTags;
     @Nullable
     private final AbilityCategory category;
+    @Nullable
+    private final net.eclipce.somnium.core.meter.MeterCost staminaCost;
+    private final java.util.Map<ResourceLocation, net.eclipce.somnium.core.meter.MeterCost> meterCosts;
 
     /**
      * Creates an AbilityType with the given properties.
@@ -74,8 +77,11 @@ public class AbilityType {
         this.persistOnDeath = properties.persistOnDeath;
         this.defaultEnabled = properties.defaultEnabled;
         this.icon = properties.icon;
-        this.conflictTags = Collections.unmodifiableSet(new HashSet<>(properties.conflictTags));
+        this.conflictTags = java.util.Collections.unmodifiableSet(new java.util.HashSet<>(properties.conflictTags));
         this.category = properties.category;
+        this.staminaCost = properties.staminaCost;
+        this.meterCosts = java.util.Collections.unmodifiableMap(
+                new java.util.LinkedHashMap<>(properties.meterCosts));
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -385,6 +391,58 @@ public class AbilityType {
         return category;
     }
 
+    /** @return the stamina cost for this ability, or null if none */
+    @Nullable
+    public net.eclipce.somnium.core.meter.MeterCost getStaminaCost() {
+        return staminaCost;
+    }
+
+    /** @return all custom meter costs for this ability (unmodifiable) */
+    public java.util.Map<ResourceLocation, net.eclipce.somnium.core.meter.MeterCost> getMeterCosts() {
+        return meterCosts;
+    }
+
+    /**
+     * Checks if the player can afford all meter costs for this ability.
+     *
+     * @param data the player's data
+     * @return true if all meter requirements are met
+     */
+    public boolean canAffordMeterCosts(net.eclipce.somnium.core.data.SomniumPlayerData data) {
+        if (staminaCost != null) {
+            if (!data.getStaminaData().canAfford(staminaCost.getRequiredMinimum())) {
+                return false;
+            }
+        }
+        for (java.util.Map.Entry<ResourceLocation, net.eclipce.somnium.core.meter.MeterCost> entry
+                : meterCosts.entrySet()) {
+            net.eclipce.somnium.core.meter.MeterInstance meter = data.getMeter(entry.getKey());
+            if (meter == null || !entry.getValue().canActivate(meter)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * Applies all meter costs. Call after successful activation.
+     *
+     * @param data the player's data
+     */
+    public void applyMeterCosts(net.eclipce.somnium.core.data.SomniumPlayerData data) {
+        if (staminaCost != null) {
+            // Use StaminaData.drain which applies drain modifier and handles overuse
+            data.getStaminaData().drain(staminaCost.getAmount());
+        }
+        for (java.util.Map.Entry<ResourceLocation, net.eclipce.somnium.core.meter.MeterCost> entry
+                : meterCosts.entrySet()) {
+            net.eclipce.somnium.core.meter.MeterInstance meter = data.getMeter(entry.getKey());
+            if (meter != null) {
+                entry.getValue().apply(meter);
+            }
+        }
+    }
+
     // ═══════════════════════════════════════════════════════════════════
     //  Properties builder
     // ═══════════════════════════════════════════════════════════════════
@@ -411,6 +469,9 @@ public class AbilityType {
         ResourceLocation icon = null;
         Set<ResourceLocation> conflictTags = new HashSet<>();
         @Nullable AbilityCategory category = null;
+        @Nullable net.eclipce.somnium.core.meter.MeterCost staminaCost = null;
+        final java.util.Map<ResourceLocation, net.eclipce.somnium.core.meter.MeterCost> meterCosts =
+                new java.util.LinkedHashMap<>();
 
         /**
          * Sets the activation type. Defaults to {@link ActivationType#INSTANT}.
@@ -490,6 +551,52 @@ public class AbilityType {
          */
         public Properties category(AbilityCategory category) {
             this.category = category;
+            return this;
+        }
+
+        /**
+         * Sets a stamina cost for this ability.
+         *
+         * @param cost the stamina meter cost
+         * @see net.eclipce.somnium.core.meter.MeterCost
+         */
+        public Properties staminaCost(net.eclipce.somnium.core.meter.MeterCost cost) {
+            this.staminaCost = cost;
+            return this;
+        }
+
+        /**
+         * Simple stamina drain. Drains the amount on activation, requires
+         * at least that amount to activate.
+         *
+         * @param amount stamina to drain (also the minimum required)
+         */
+        public Properties staminaCost(float amount) {
+            this.staminaCost = net.eclipce.somnium.core.meter.MeterCost.drain(amount, amount);
+            return this;
+        }
+
+        /**
+         * Adds a custom meter cost for this ability.
+         *
+         * @param meterId the meter definition ID
+         * @param cost    the meter cost
+         */
+        public Properties meterCost(ResourceLocation meterId,
+                                    net.eclipce.somnium.core.meter.MeterCost cost) {
+            this.meterCosts.put(meterId, cost);
+            return this;
+        }
+
+        /**
+         * Simple custom meter drain. Drains amount, requires at least that amount.
+         *
+         * @param meterId the meter definition ID
+         * @param amount  the amount to drain (also the minimum required)
+         */
+        public Properties meterCost(ResourceLocation meterId, float amount) {
+            this.meterCosts.put(meterId,
+                    net.eclipce.somnium.core.meter.MeterCost.drain(amount, amount));
             return this;
         }
     }

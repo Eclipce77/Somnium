@@ -4,6 +4,7 @@ import net.eclipce.somnium.Somnium;
 import net.eclipce.somnium.client.keybind.SomniumKeybinds;
 import net.eclipce.somnium.core.ability.AbilityInstance;
 import net.eclipce.somnium.core.data.SomniumPlayerData;
+import net.eclipce.somnium.core.meter.MeterInstance;
 import net.eclipce.somnium.network.ActivateAbilityPacket;
 import net.eclipce.somnium.network.QuickCategoryPacket;
 import net.eclipce.somnium.network.QuickTransformPacket;
@@ -79,6 +80,7 @@ public class SomniumClientEvents {
         @SubscribeEvent
         public static void onRegisterOverlays(RegisterGuiOverlaysEvent event) {
             event.registerAboveAll("ability_bar", new AbilityBarOverlay());
+            event.registerAboveAll("meter_bar", new MeterOverlay());
             Somnium.LOGGER.debug("Somnium ability bar overlay registered");
         }
     }
@@ -118,6 +120,12 @@ public class SomniumClientEvents {
                     if (instance.isOnCooldown()) {
                         instance.tickCooldown();
                     }
+                }
+                // Client-side meter regen for smooth display
+                localData.getStaminaData().clientTick();
+                for (net.eclipce.somnium.core.meter.MeterInstance meter
+                        : localData.getAllMeters().values()) {
+                    meter.tick();
                 }
             }
 
@@ -170,10 +178,29 @@ public class SomniumClientEvents {
             if (SomniumKeybinds.PAGE_TOGGLE.consumeClick()) {
                 // Page toggle only applies to ability bar
                 if (!transBarActive && !catBarActive && localData != null) {
-                    int nextPage = (localData.getActivePage() + 1) % SomniumPlayerData.MAX_PAGES;
-                    localData.setActivePage(nextPage);
-                    SomniumNetwork.sendToServer(
-                            new net.eclipce.somnium.network.SetActivePagePacket(nextPage));
+                    // Find next populated page (wrapping around)
+                    int current = localData.getActivePage();
+                    int nextPage = current;
+                    for (int i = 1; i <= SomniumPlayerData.MAX_PAGES; i++) {
+                        int candidate = (current + i) % SomniumPlayerData.MAX_PAGES;
+                        // Check if this page has any abilities
+                        boolean hasContent = false;
+                        for (int slot = 0; slot < SomniumPlayerData.BAR_SIZE; slot++) {
+                            if (localData.getBarSlotKey(candidate, slot) != null) {
+                                hasContent = true;
+                                break;
+                            }
+                        }
+                        if (hasContent) {
+                            nextPage = candidate;
+                            break;
+                        }
+                    }
+                    if (nextPage != current) {
+                        localData.setActivePage(nextPage);
+                        SomniumNetwork.sendToServer(
+                                new net.eclipce.somnium.network.SetActivePagePacket(nextPage));
+                    }
                 }
             }
 

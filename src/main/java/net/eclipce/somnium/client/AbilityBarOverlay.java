@@ -88,6 +88,16 @@ public class AbilityBarOverlay implements IGuiOverlay {
     private static final int KEYBIND_LABEL_GAP = 2;
 
     // ═══════════════════════════════════════════════════════════════════
+    //  Screen edge offset — adjust these to move the entire UI
+    // ═══════════════════════════════════════════════════════════════════
+
+    /** Horizontal offset in pixels from the screen edge. */
+    public static final int SCREEN_OFFSET_X = 7;
+
+    /** Vertical offset in pixels from the screen edge. */
+    public static final int SCREEN_OFFSET_Y = 5;
+
+    // ═══════════════════════════════════════════════════════════════════
     //  Transformation bar toggle
     // ═══════════════════════════════════════════════════════════════════
 
@@ -173,15 +183,25 @@ public class AbilityBarOverlay implements IGuiOverlay {
         return data != null ? data.getActivePage() : 0;
     }
 
-    /** @return true if the player has abilities on more than one page */
-    private static boolean isPaged() {
+    /** @return true if the player has abilities on pages beyond page 0 */
+    public static boolean isPaged() {
         SomniumPlayerData data = ClientAbilityData.getLocalData();
         if (data == null) return false;
-        // Show paged texture if any slot on page 1+ has content
+        // Only show paged texture if page 1+ has any content
         for (int page = 1; page < SomniumPlayerData.MAX_PAGES; page++) {
             for (int slot = 0; slot < SomniumPlayerData.BAR_SIZE; slot++) {
                 if (data.getBarSlotKey(page, slot) != null) return true;
             }
+        }
+        return false;
+    }
+
+    /**
+     * Checks if a specific page has any abilities on it.
+     */
+    private static boolean isPagePopulated(SomniumPlayerData data, int page) {
+        for (int slot = 0; slot < SomniumPlayerData.BAR_SIZE; slot++) {
+            if (data.getBarSlotKey(page, slot) != null) return true;
         }
         return false;
     }
@@ -222,8 +242,8 @@ public class AbilityBarOverlay implements IGuiOverlay {
 
         // Get config values
         BarPosition position = SomniumClientConfig.getBarPosition();
-        int offsetX = SomniumClientConfig.BAR_OFFSET_X.get();
-        int offsetY = SomniumClientConfig.BAR_OFFSET_Y.get();
+        int offsetX = SCREEN_OFFSET_X;
+        int offsetY = SCREEN_OFFSET_Y;
 
         // Calculate bar position on screen
         int barX = calculateBarX(position, screenWidth, offsetX);

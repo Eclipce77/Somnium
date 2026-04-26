@@ -71,6 +71,7 @@ public class SomniumTickHandler {
         tickActiveAbilities(serverPlayer, data);
         tickPassiveAbilities(serverPlayer, data);
         tickTransformations(serverPlayer, data);
+        tickMeters(serverPlayer, data);
 
         // Sync to client if anything changed
         SomniumNetwork.syncIfDirty(serverPlayer);
@@ -108,12 +109,18 @@ public class SomniumTickHandler {
 
     /**
      * Decrements cooldowns on all ability instances that are on cooldown.
+     * Only marks data dirty when a cooldown finishes (transitions to 0),
+     * not every tick. The client predicts intermediate cooldown values
+     * locally for smooth display.
      */
     private static void tickCooldowns(SomniumPlayerData data) {
         for (AbilityInstance instance : data.getAbilityInventory().values()) {
             if (instance.isOnCooldown()) {
                 instance.tickCooldown();
-                data.markDirty();
+                // Only sync when cooldown finishes — client predicts the rest
+                if (!instance.isOnCooldown()) {
+                    data.markDirty();
+                }
             }
         }
     }
@@ -219,5 +226,88 @@ public class SomniumTickHandler {
             // evaluating other triggers this tick
             if (data.hasActiveTransformation()) break;
         }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    //  Meter ticking
+    // ═══════════════════════════════════════════════════════════════════
+
+    /**
+     * Ticks all meters (stamina + custom). Handles regeneration and
+     * depletion effects.
+     */
+    private static void tickMeters(ServerPlayer player, SomniumPlayerData data) {
+        // Tick stamina
+        net.eclipce.somnium.core.meter.StaminaData stamina = data.getStaminaData();
+        stamina.tick();
+
+        // Handle overuse state transitions
+        if (stamina.consumeEnteredOveruse()) {
+            // Just entered a new overuse stage — remove old effects, apply new
+            removeAllOveruseEffects(player);
+            applyOveruseEffects(player, stamina.getOveruseStage(),
+                    stamina.getEffectTimer());
+        }
+
+        if (stamina.consumeEffectsExpired()) {
+            // Effect timer ran out — remove all overuse effects
+            removeAllOveruseEffects(player);
+        }
+
+        // Tick custom meters
+        for (java.util.Map.Entry<net.minecraft.resources.ResourceLocation,
+                net.eclipce.somnium.core.meter.MeterInstance> entry
+                : data.getAllMeters().entrySet()) {
+            net.eclipce.somnium.core.meter.MeterInstance meter = entry.getValue();
+            boolean meterDepleted = meter.tick();
+
+            if (meterDepleted) {
+                net.eclipce.somnium.core.meter.MeterDefinition def =
+                        net.eclipce.somnium.core.meter.MeterDefinition.get(entry.getKey());
+                if (def != null && def.getOnDepleted() != null) {
+                    def.getOnDepleted().accept(player);
+                }
+            }
+        }
+    }
+
+    /**
+     * Applies overuse effects for the given stage with the specified duration.
+     */
+    private static void applyOveruseEffects(ServerPlayer player, int stage, int durationTicks) {
+        if (stage >= 1) {
+            int slowAmp = stage >= 3 ? 1 : 0;
+            player.addEffect(new net.minecraft.world.effect.MobEffectInstance(
+                    net.minecraft.world.effect.MobEffects.MOVEMENT_SLOWDOWN,
+                    durationTicks, slowAmp, true, false, true));
+        }
+        if (stage >= 2) {
+            int hungerAmp = stage >= 4 ? 1 : 0;
+            player.addEffect(new net.minecraft.world.effect.MobEffectInstance(
+                    net.minecraft.world.effect.MobEffects.HUNGER,
+                    durationTicks, hungerAmp, true, false, true));
+        }
+        if (stage >= 3) {
+            int weakAmp = stage >= 4 ? 1 : 0;
+            player.addEffect(new net.minecraft.world.effect.MobEffectInstance(
+                    net.minecraft.world.effect.MobEffects.WEAKNESS,
+                    durationTicks, weakAmp, true, false, true));
+        }
+        if (stage >= 5) {
+            player.addEffect(new net.minecraft.world.effect.MobEffectInstance(
+                    net.minecraft.world.effect.MobEffects.WITHER,
+                    durationTicks, 0, true, false, true));
+        }
+    }
+
+    /**
+     * Removes all overuse-related effects from the player.
+     * Only removes the specific effects used by the overuse system.
+     */
+    private static void removeAllOveruseEffects(ServerPlayer player) {
+        player.removeEffect(net.minecraft.world.effect.MobEffects.MOVEMENT_SLOWDOWN);
+        player.removeEffect(net.minecraft.world.effect.MobEffects.HUNGER);
+        player.removeEffect(net.minecraft.world.effect.MobEffects.WEAKNESS);
+        player.removeEffect(net.minecraft.world.effect.MobEffects.WITHER);
     }
 }

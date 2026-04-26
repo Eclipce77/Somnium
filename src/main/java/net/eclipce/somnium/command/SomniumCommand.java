@@ -1,6 +1,7 @@
 package net.eclipce.somnium.command;
 
 import com.mojang.brigadier.CommandDispatcher;
+import com.mojang.brigadier.arguments.FloatArgumentType;
 import com.mojang.brigadier.context.CommandContext;
 import com.mojang.brigadier.exceptions.CommandSyntaxException;
 import com.mojang.brigadier.suggestion.SuggestionProvider;
@@ -8,6 +9,8 @@ import net.eclipce.somnium.Somnium;
 import net.eclipce.somnium.core.ability.AbilityType;
 import net.eclipce.somnium.core.data.SomniumCapability;
 import net.eclipce.somnium.core.data.SomniumPlayerData;
+import net.eclipce.somnium.core.meter.MeterDefinition;
+import net.eclipce.somnium.core.meter.MeterInstance;
 import net.eclipce.somnium.core.power.Power;
 import net.eclipce.somnium.core.registry.SomniumRegistries;
 import net.eclipce.somnium.core.tag.TagHandler;
@@ -114,6 +117,7 @@ public final class SomniumCommand {
                         .then(buildAbilityCommands())
                         .then(buildPlayerCommands())
                         .then(buildTagCommands())
+                        .then(buildMeterCommands())
         );
     }
 
@@ -669,6 +673,215 @@ public final class SomniumCommand {
             }
         }
 
+        return 1;
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    //  /somnium meter
+    // ═══════════════════════════════════════════════════════════════════
+
+    private static com.mojang.brigadier.builder.LiteralArgumentBuilder<CommandSourceStack>
+    buildMeterCommands() {
+        return Commands.literal("meter")
+                // /somnium meter stamina ...
+                .then(Commands.literal("stamina")
+                        .then(Commands.literal("get")
+                                .then(Commands.argument("player", EntityArgument.player())
+                                        .executes(SomniumCommand::meterStaminaGet)))
+                        .then(Commands.literal("set")
+                                .then(Commands.argument("player", EntityArgument.player())
+                                        .then(Commands.argument("value", FloatArgumentType.floatArg(0))
+                                                .executes(SomniumCommand::meterStaminaSet))))
+                        .then(Commands.literal("add")
+                                .then(Commands.argument("player", EntityArgument.player())
+                                        .then(Commands.argument("value", FloatArgumentType.floatArg())
+                                                .executes(SomniumCommand::meterStaminaAdd))))
+                        .then(Commands.literal("max")
+                                .then(Commands.argument("player", EntityArgument.player())
+                                        .then(Commands.argument("value", FloatArgumentType.floatArg(1))
+                                                .executes(SomniumCommand::meterStaminaMax)))))
+                // /somnium meter custom ...
+                .then(Commands.literal("custom")
+                        .then(Commands.literal("get")
+                                .then(Commands.argument("player", EntityArgument.player())
+                                        .then(Commands.argument("meter", ResourceLocationArgument.id())
+                                                .executes(SomniumCommand::meterCustomGet))))
+                        .then(Commands.literal("set")
+                                .then(Commands.argument("player", EntityArgument.player())
+                                        .then(Commands.argument("meter", ResourceLocationArgument.id())
+                                                .then(Commands.argument("value", FloatArgumentType.floatArg(0))
+                                                        .executes(SomniumCommand::meterCustomSet)))))
+                        .then(Commands.literal("add")
+                                .then(Commands.argument("player", EntityArgument.player())
+                                        .then(Commands.argument("meter", ResourceLocationArgument.id())
+                                                .then(Commands.argument("value", FloatArgumentType.floatArg())
+                                                        .executes(SomniumCommand::meterCustomAdd)))))
+                        .then(Commands.literal("max")
+                                .then(Commands.argument("player", EntityArgument.player())
+                                        .then(Commands.argument("meter", ResourceLocationArgument.id())
+                                                .then(Commands.argument("value", FloatArgumentType.floatArg(1))
+                                                        .executes(SomniumCommand::meterCustomMax))))));
+    }
+
+    // --- Stamina commands ---
+
+    private static int meterStaminaGet(CommandContext<CommandSourceStack> context)
+            throws CommandSyntaxException {
+        ServerPlayer player = EntityArgument.getPlayer(context, "player");
+        SomniumPlayerData data = SomniumCapability.get(player);
+        if (data == null) { context.getSource().sendFailure(Component.literal("No data.")); return 0; }
+
+        net.eclipce.somnium.core.meter.StaminaData stamina = data.getStaminaData();
+        context.getSource().sendSuccess(() -> Component.literal("Stamina for ")
+                .append(player.getDisplayName())
+                .append(": ")
+                .append(Component.literal(String.format("%.1f / %.1f", stamina.getValue(), stamina.getMaxValue()))
+                        .withStyle(ChatFormatting.YELLOW))
+                .append(stamina.isInOveruse()
+                        ? Component.literal(" [OVERUSE Stage " + stamina.getOveruseStage() + "]")
+                        .withStyle(ChatFormatting.RED)
+                        : Component.literal("")), false);
+        return 1;
+    }
+
+    private static int meterStaminaSet(CommandContext<CommandSourceStack> context)
+            throws CommandSyntaxException {
+        ServerPlayer player = EntityArgument.getPlayer(context, "player");
+        float value = FloatArgumentType.getFloat(context, "value");
+        SomniumPlayerData data = SomniumCapability.get(player);
+        if (data == null) { context.getSource().sendFailure(Component.literal("No data.")); return 0; }
+
+        data.getStaminaData().setValue(value);
+        SomniumNetwork.syncToClient(player);
+        context.getSource().sendSuccess(() -> Component.literal("Set stamina to ")
+                .append(Component.literal(String.format("%.1f", value))
+                        .withStyle(ChatFormatting.YELLOW))
+                .append(" for ").append(player.getDisplayName()), true);
+        return 1;
+    }
+
+    private static int meterStaminaAdd(CommandContext<CommandSourceStack> context)
+            throws CommandSyntaxException {
+        ServerPlayer player = EntityArgument.getPlayer(context, "player");
+        float value = FloatArgumentType.getFloat(context, "value");
+        SomniumPlayerData data = SomniumCapability.get(player);
+        if (data == null) { context.getSource().sendFailure(Component.literal("No data.")); return 0; }
+
+        net.eclipce.somnium.core.meter.StaminaData stamina = data.getStaminaData();
+        if (value >= 0) stamina.add(value); else stamina.drain(-value);
+        SomniumNetwork.syncToClient(player);
+        context.getSource().sendSuccess(() -> Component.literal("Stamina now ")
+                .append(Component.literal(String.format("%.1f / %.1f", stamina.getValue(), stamina.getMaxValue()))
+                        .withStyle(ChatFormatting.YELLOW))
+                .append(" for ").append(player.getDisplayName()), true);
+        return 1;
+    }
+
+    private static int meterStaminaMax(CommandContext<CommandSourceStack> context)
+            throws CommandSyntaxException {
+        ServerPlayer player = EntityArgument.getPlayer(context, "player");
+        float value = FloatArgumentType.getFloat(context, "value");
+        SomniumPlayerData data = SomniumCapability.get(player);
+        if (data == null) { context.getSource().sendFailure(Component.literal("No data.")); return 0; }
+
+        data.getStaminaData().setMaxValue(value);
+        SomniumNetwork.syncToClient(player);
+        context.getSource().sendSuccess(() -> Component.literal("Set stamina max to ")
+                .append(Component.literal(String.format("%.1f", value))
+                        .withStyle(ChatFormatting.YELLOW))
+                .append(" for ").append(player.getDisplayName()), true);
+        return 1;
+    }
+
+    // --- Custom meter commands ---
+
+    private static int meterCustomGet(CommandContext<CommandSourceStack> context)
+            throws CommandSyntaxException {
+        ServerPlayer player = EntityArgument.getPlayer(context, "player");
+        ResourceLocation meterId = ResourceLocationArgument.getId(context, "meter");
+        SomniumPlayerData data = SomniumCapability.get(player);
+        if (data == null) { context.getSource().sendFailure(Component.literal("No data.")); return 0; }
+
+        MeterInstance meter = data.getMeter(meterId);
+        if (meter == null) {
+            context.getSource().sendFailure(Component.literal("Unknown meter: " + meterId));
+            return 0;
+        }
+        context.getSource().sendSuccess(() -> Component.literal("Meter ")
+                .append(Component.literal(meterId.toString()).withStyle(ChatFormatting.GREEN))
+                .append(" for ").append(player.getDisplayName())
+                .append(": ")
+                .append(Component.literal(String.format("%.1f / %.1f", meter.getValue(), meter.getMaxValue()))
+                        .withStyle(ChatFormatting.YELLOW)), false);
+        return 1;
+    }
+
+    private static int meterCustomSet(CommandContext<CommandSourceStack> context)
+            throws CommandSyntaxException {
+        ServerPlayer player = EntityArgument.getPlayer(context, "player");
+        ResourceLocation meterId = ResourceLocationArgument.getId(context, "meter");
+        float value = FloatArgumentType.getFloat(context, "value");
+        SomniumPlayerData data = SomniumCapability.get(player);
+        if (data == null) { context.getSource().sendFailure(Component.literal("No data.")); return 0; }
+
+        MeterInstance meter = data.getMeter(meterId);
+        if (meter == null) {
+            context.getSource().sendFailure(Component.literal("Unknown meter: " + meterId));
+            return 0;
+        }
+        meter.setValue(value);
+        SomniumNetwork.syncToClient(player);
+        context.getSource().sendSuccess(() -> Component.literal("Set ")
+                .append(Component.literal(meterId.toString()).withStyle(ChatFormatting.GREEN))
+                .append(" to ").append(Component.literal(String.format("%.1f", value))
+                        .withStyle(ChatFormatting.YELLOW))
+                .append(" for ").append(player.getDisplayName()), true);
+        return 1;
+    }
+
+    private static int meterCustomAdd(CommandContext<CommandSourceStack> context)
+            throws CommandSyntaxException {
+        ServerPlayer player = EntityArgument.getPlayer(context, "player");
+        ResourceLocation meterId = ResourceLocationArgument.getId(context, "meter");
+        float value = FloatArgumentType.getFloat(context, "value");
+        SomniumPlayerData data = SomniumCapability.get(player);
+        if (data == null) { context.getSource().sendFailure(Component.literal("No data.")); return 0; }
+
+        MeterInstance meter = data.getMeter(meterId);
+        if (meter == null) {
+            context.getSource().sendFailure(Component.literal("Unknown meter: " + meterId));
+            return 0;
+        }
+        if (value >= 0) meter.add(value); else meter.drain(-value);
+        SomniumNetwork.syncToClient(player);
+        context.getSource().sendSuccess(() -> Component.literal("Meter ")
+                .append(Component.literal(meterId.toString()).withStyle(ChatFormatting.GREEN))
+                .append(" now ").append(Component.literal(String.format("%.1f / %.1f", meter.getValue(), meter.getMaxValue()))
+                        .withStyle(ChatFormatting.YELLOW))
+                .append(" for ").append(player.getDisplayName()), true);
+        return 1;
+    }
+
+    private static int meterCustomMax(CommandContext<CommandSourceStack> context)
+            throws CommandSyntaxException {
+        ServerPlayer player = EntityArgument.getPlayer(context, "player");
+        ResourceLocation meterId = ResourceLocationArgument.getId(context, "meter");
+        float value = FloatArgumentType.getFloat(context, "value");
+        SomniumPlayerData data = SomniumCapability.get(player);
+        if (data == null) { context.getSource().sendFailure(Component.literal("No data.")); return 0; }
+
+        MeterInstance meter = data.getMeter(meterId);
+        if (meter == null) {
+            context.getSource().sendFailure(Component.literal("Unknown meter: " + meterId));
+            return 0;
+        }
+        meter.setMaxValue(value);
+        SomniumNetwork.syncToClient(player);
+        context.getSource().sendSuccess(() -> Component.literal("Set ")
+                .append(Component.literal(meterId.toString()).withStyle(ChatFormatting.GREEN))
+                .append(" max to ").append(Component.literal(String.format("%.1f", value))
+                        .withStyle(ChatFormatting.YELLOW))
+                .append(" for ").append(player.getDisplayName()), true);
         return 1;
     }
 

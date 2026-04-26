@@ -89,6 +89,9 @@ public class SomniumPlayerData {
     private static final String TAG_CATEGORY_SLOTS = "Slots";
     private static final String TAG_MOST_RECENT_CATEGORY = "MostRecentCategory";
     private static final String TAG_PLAYER_TAGS = "PlayerTags";
+    private static final String TAG_STAMINA = "Stamina";
+    private static final String TAG_METERS = "Meters";
+    private static final String TAG_METER_ID = "MeterId";
 
     // ═══════════════════════════════════════════════════════════════════
     //  Fields
@@ -167,6 +170,18 @@ public class SomniumPlayerData {
      * Tags assigned to this player. Used for power gating and auto-granting.
      */
     private final Set<ResourceLocation> playerTags = new LinkedHashSet<>();
+
+    /**
+     * Built-in stamina system with overuse tracking and drain modifiers.
+     */
+    private final net.eclipce.somnium.core.meter.StaminaData staminaData =
+            new net.eclipce.somnium.core.meter.StaminaData();
+
+    /**
+     * Custom meters — one instance per registered MeterDefinition, created on demand.
+     */
+    private final Map<ResourceLocation, net.eclipce.somnium.core.meter.MeterInstance> meters =
+            new LinkedHashMap<>();
 
     /**
      * Per-ability-per-power progression data. Keys are composite strings
@@ -818,6 +833,54 @@ public class SomniumPlayerData {
     }
 
     // ═══════════════════════════════════════════════════════════════════
+    //  Stamina meter
+    // ═══════════════════════════════════════════════════════════════════
+
+    /** @return the built-in stamina data (with overuse tracking) */
+    public net.eclipce.somnium.core.meter.StaminaData getStaminaData() {
+        return staminaData;
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    //  Custom meters
+    // ═══════════════════════════════════════════════════════════════════
+
+    /**
+     * Gets or creates a custom meter instance. If the meter doesn't exist
+     * yet for this player, creates one from the definition's defaults.
+     *
+     * @param meterId the meter definition ID
+     * @return the meter instance, or null if no such definition exists
+     */
+    @Nullable
+    public net.eclipce.somnium.core.meter.MeterInstance getMeter(ResourceLocation meterId) {
+        net.eclipce.somnium.core.meter.MeterInstance instance = meters.get(meterId);
+        if (instance == null) {
+            net.eclipce.somnium.core.meter.MeterDefinition def =
+                    net.eclipce.somnium.core.meter.MeterDefinition.get(meterId);
+            if (def != null) {
+                instance = new net.eclipce.somnium.core.meter.MeterInstance(def);
+                meters.put(meterId, instance);
+                markDirty();
+            }
+        }
+        return instance;
+    }
+
+    /**
+     * Gets a custom meter instance without auto-creating.
+     */
+    @Nullable
+    public net.eclipce.somnium.core.meter.MeterInstance getMeterIfPresent(ResourceLocation meterId) {
+        return meters.get(meterId);
+    }
+
+    /** @return all custom meter instances */
+    public Map<ResourceLocation, net.eclipce.somnium.core.meter.MeterInstance> getAllMeters() {
+        return java.util.Collections.unmodifiableMap(meters);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
     //  Unlock progress tracking
     // ═══════════════════════════════════════════════════════════════════
 
@@ -997,6 +1060,18 @@ public class SomniumPlayerData {
         this.playerTags.clear();
         this.playerTags.addAll(source.playerTags);
 
+        // Stamina
+        this.staminaData.copyFrom(source.staminaData);
+
+        // Custom meters
+        this.meters.clear();
+        for (Map.Entry<ResourceLocation, net.eclipce.somnium.core.meter.MeterInstance> entry
+                : source.meters.entrySet()) {
+            CompoundTag serialized = entry.getValue().serialize();
+            this.meters.put(entry.getKey(),
+                    net.eclipce.somnium.core.meter.MeterInstance.deserialize(serialized));
+        }
+
         this.unlockProgress.clear();
         for (Map.Entry<String, CompoundTag> entry : source.unlockProgress.entrySet()) {
             this.unlockProgress.put(entry.getKey(), entry.getValue().copy());
@@ -1142,6 +1217,20 @@ public class SomniumPlayerData {
             tagsTag.add(net.minecraft.nbt.StringTag.valueOf(tag.toString()));
         }
         root.put(TAG_PLAYER_TAGS, tagsTag);
+
+        // Stamina
+        root.put(TAG_STAMINA, staminaData.serialize());
+
+        // Custom meters
+        ListTag metersTag = new ListTag();
+        for (Map.Entry<ResourceLocation, net.eclipce.somnium.core.meter.MeterInstance> entry
+                : meters.entrySet()) {
+            CompoundTag meterTag = new CompoundTag();
+            meterTag.putString(TAG_METER_ID, entry.getKey().toString());
+            meterTag.put("Data", entry.getValue().serialize());
+            metersTag.add(meterTag);
+        }
+        root.put(TAG_METERS, metersTag);
 
         // Unlock progress — list of {Key, Data} entries
         ListTag progressTag = new ListTag();
@@ -1306,14 +1395,39 @@ public class SomniumPlayerData {
             }
         }
 
+        // Stamina
+        if (root.contains(TAG_STAMINA)) {
+            net.eclipce.somnium.core.meter.StaminaData loaded =
+                    net.eclipce.somnium.core.meter.StaminaData.deserialize(
+                            root.getCompound(TAG_STAMINA));
+            staminaData.copyFrom(loaded);
+        }
+
+        // Custom meters
+        meters.clear();
+        if (root.contains(TAG_METERS)) {
+            ListTag metersTag = root.getList(TAG_METERS, Tag.TAG_COMPOUND);
+            for (int i = 0; i < metersTag.size(); i++) {
+                CompoundTag meterTag = metersTag.getCompound(i);
+                ResourceLocation meterId = new ResourceLocation(
+                        meterTag.getString(TAG_METER_ID));
+                meters.put(meterId,
+                        net.eclipce.somnium.core.meter.MeterInstance.deserialize(
+                                meterTag.getCompound("Data")));
+            }
+        }
+
         // Unlock progress
-        ListTag progressTag = root.getList(TAG_UNLOCK_PROGRESS, Tag.TAG_COMPOUND);
-        for (int i = 0; i < progressTag.size(); i++) {
-            CompoundTag progressEntry = progressTag.getCompound(i);
-            String key = progressEntry.getString(TAG_PROGRESS_KEY);
-            CompoundTag data = progressEntry.getCompound(TAG_PROGRESS_DATA);
-            if (!key.isEmpty()) {
-                unlockProgress.put(key, data.copy());
+        unlockProgress.clear();
+        if (root.contains(TAG_UNLOCK_PROGRESS)) {
+            ListTag progressTag = root.getList(TAG_UNLOCK_PROGRESS, Tag.TAG_COMPOUND);
+            for (int i = 0; i < progressTag.size(); i++) {
+                CompoundTag progressEntry = progressTag.getCompound(i);
+                String key = progressEntry.getString(TAG_PROGRESS_KEY);
+                CompoundTag data = progressEntry.getCompound(TAG_PROGRESS_DATA);
+                if (!key.isEmpty()) {
+                    unlockProgress.put(key, data.copy());
+                }
             }
         }
     }

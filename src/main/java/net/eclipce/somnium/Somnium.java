@@ -59,6 +59,8 @@ public class Somnium {
 
         TestContent.init(modEventBus);
 
+        modEventBus.addListener(this::onClientSetup);
+
         LOGGER.info("Somnium API initialized");
 
         // Register the commonSetup method for modloading
@@ -75,6 +77,16 @@ public class Somnium {
     private void registerCapabilities(RegisterCapabilitiesEvent event) {
         event.register(SomniumPlayerData.class);
     }
+
+    /**
+     * Client-side setup — conditionally initializes GeckoLib integration.
+     */
+    private void onClientSetup(net.minecraftforge.fml.event.lifecycle.FMLClientSetupEvent event) {
+        event.enqueueWork(() -> {
+            net.eclipce.somnium.compat.geckolib.GeckoLibCompat.initClient();
+        });
+    }
+
 
     private void commonSetup(final FMLCommonSetupEvent event)
     {
@@ -108,4 +120,5 @@ public class Somnium {
             LOGGER.info("MINECRAFT NAME >> {}", Minecraft.getInstance().getUser().getName());
         }
     }
+
 }

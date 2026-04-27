@@ -64,6 +64,8 @@ public class AbilityType {
     @Nullable
     private final net.eclipce.somnium.core.meter.MeterCost staminaCost;
     private final java.util.Map<ResourceLocation, net.eclipce.somnium.core.meter.MeterCost> meterCosts;
+    @Nullable
+    private final String castAnimation;
 
     /**
      * Creates an AbilityType with the given properties.
@@ -82,6 +84,7 @@ public class AbilityType {
         this.staminaCost = properties.staminaCost;
         this.meterCosts = java.util.Collections.unmodifiableMap(
                 new java.util.LinkedHashMap<>(properties.meterCosts));
+        this.castAnimation = properties.castAnimation;
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -403,6 +406,15 @@ public class AbilityType {
     }
 
     /**
+     * @return the GeckoLib animation name to play on cast, or {@code null}
+     *         if no cast animation is set. Requires GeckoLib to be loaded.
+     */
+    @Nullable
+    public String getCastAnimation() {
+        return castAnimation;
+    }
+
+    /**
      * Checks if the player can afford all meter costs for this ability.
      *
      * @param data the player's data
@@ -472,6 +484,7 @@ public class AbilityType {
         @Nullable net.eclipce.somnium.core.meter.MeterCost staminaCost = null;
         final java.util.Map<ResourceLocation, net.eclipce.somnium.core.meter.MeterCost> meterCosts =
                 new java.util.LinkedHashMap<>();
+        @Nullable String castAnimation = null;
 
         /**
          * Sets the activation type. Defaults to {@link ActivationType#INSTANT}.
@@ -597,6 +610,18 @@ public class AbilityType {
         public Properties meterCost(ResourceLocation meterId, float amount) {
             this.meterCosts.put(meterId,
                     net.eclipce.somnium.core.meter.MeterCost.drain(amount, amount));
+            return this;
+        }
+
+        /**
+         * Sets a GeckoLib animation to play on the player when this ability
+         * is activated. Requires GeckoLib to be loaded — silently ignored
+         * if GeckoLib is not present.
+         *
+         * @param animationName the animation name (e.g., "animation.mymod.cast_fire")
+         */
+        public Properties castAnimation(String animationName) {
+            this.castAnimation = animationName;
             return this;
         }
     }

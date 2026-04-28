@@ -64,7 +64,7 @@ public class Somnium {
         LOGGER.info("Somnium API initialized");
 
         // Register the commonSetup method for modloading
-        modEventBus.addListener(this::commonSetup);
+        modEventBus.addListener(this::onCommonSetup);
 
         // Register ourselves for server and other game events we are interested in
         MinecraftForge.EVENT_BUS.register(this);
@@ -87,12 +87,13 @@ public class Somnium {
         });
     }
 
-
-    private void commonSetup(final FMLCommonSetupEvent event)
-    {
-        // Some common setup code
-        LOGGER.info("HELLO FROM COMMON SETUP");
-
+    /**
+     * Common setup — conditionally initializes Curios integration.
+     */
+    private void onCommonSetup(net.minecraftforge.fml.event.lifecycle.FMLCommonSetupEvent event) {
+        event.enqueueWork(() -> {
+            net.eclipce.somnium.compat.curios.CuriosCompat.init();
+        });
     }
 
     // Add the example block item to the building blocks tab

@@ -148,6 +148,10 @@ repositories {
         url = 'https://maven.theillusivec4.top/'
     }
 
+    maven {
+        name = 'JitPack'
+        url = 'https://jitpack.io'
+    }
 
 }
 
@@ -179,6 +183,9 @@ dependencies {
 
     compileOnly fg.deobf("top.theillusivec4.curios:curios-forge:${curios_version}:api")
     runtimeOnly fg.deobf("top.theillusivec4.curios:curios-forge:${curios_version}")
+
+    // Pehkui — optional dependency for entity scaling support
+    compileOnly fg.deobf("com.github.Virtuoel:Pehkui:${pehkui_version}")
 
 }
 

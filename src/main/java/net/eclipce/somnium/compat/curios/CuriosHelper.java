@@ -43,20 +43,19 @@ public final class CuriosHelper {
      * @return true if found in any curio slot
      */
     public static boolean hasItem(LivingEntity entity, Item item) {
-        return CuriosApi.getCuriosInventory(entity)
-                .map(handler -> {
-                    for (var entry : handler.getCurios().entrySet()) {
-                        ICurioStacksHandler stacksHandler = entry.getValue();
-                        IDynamicStackHandler stacks = stacksHandler.getStacks();
-                        for (int i = 0; i < stacks.getSlots(); i++) {
-                            if (stacks.getStackInSlot(i).getItem() == item) {
-                                return true;
-                            }
-                        }
+        java.util.concurrent.atomic.AtomicBoolean found =
+                new java.util.concurrent.atomic.AtomicBoolean(false);
+        CuriosApi.getCuriosInventory(entity).ifPresent(handler -> {
+            handler.getCurios().forEach((slotId, stacksHandler) -> {
+                IDynamicStackHandler stacks = stacksHandler.getStacks();
+                for (int i = 0; i < stacks.getSlots(); i++) {
+                    if (stacks.getStackInSlot(i).getItem() == item) {
+                        found.set(true);
                     }
-                    return false;
-                })
-                .orElse(false);
+                }
+            });
+        });
+        return found.get();
     }
 
     /**

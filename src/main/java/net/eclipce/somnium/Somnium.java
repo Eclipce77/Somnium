@@ -6,6 +6,8 @@ import net.eclipce.somnium.command.SomniumCommand;
 import net.eclipce.somnium.core.data.SomniumPlayerData;
 import net.eclipce.somnium.core.registry.SomniumRegistries;
 import net.eclipce.somnium.network.SomniumNetwork;
+import net.eclipce.somnium.test.CuriosTestSetup;
+import net.eclipce.somnium.test.GeckoLibTestSetup;
 import net.eclipce.somnium.test.TestContent;
 import net.minecraft.client.Minecraft;
 import net.minecraftforge.api.distmarker.Dist;
@@ -59,15 +61,23 @@ public class Somnium {
 
         TestContent.init(modEventBus);
 
-        modEventBus.addListener(this::onClientSetup);
+        // Integration test content — remove before release
+        if (net.minecraftforge.fml.ModList.get().isLoaded("curios")) {
+            CuriosTestSetup.init(modEventBus);
+        }
+        if (net.minecraftforge.fml.ModList.get().isLoaded("geckolib")) {
+            GeckoLibTestSetup.init(modEventBus);
+        }
 
-        LOGGER.info("Somnium API initialized");
+        modEventBus.addListener(this::onClientSetup);
 
         // Register the commonSetup method for modloading
         modEventBus.addListener(this::onCommonSetup);
 
         // Register ourselves for server and other game events we are interested in
         MinecraftForge.EVENT_BUS.register(this);
+
+        LOGGER.info("Somnium API initialized");
 
         // Register the item to a creative tab
         modEventBus.addListener(this::addCreative);
@@ -83,9 +93,11 @@ public class Somnium {
      */
     private void onClientSetup(net.minecraftforge.fml.event.lifecycle.FMLClientSetupEvent event) {
         event.enqueueWork(() -> {
+            // Optional GeckoLib integration
             net.eclipce.somnium.compat.geckolib.GeckoLibCompat.initClient();
         });
     }
+
 
     /**
      * Common setup — conditionally initializes Curios integration.

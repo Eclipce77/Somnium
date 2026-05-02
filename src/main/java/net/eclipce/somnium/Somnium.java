@@ -49,6 +49,9 @@ public class Somnium {
         // Layer 4: Initialize the network channel and register all packet types.
         SomniumNetwork.init();
 
+        // Register custom effects (Overuse)
+        net.eclipce.somnium.core.effects.SomniumEffects.init(modEventBus);
+
         // Layer 6: Register client config for ability bar position settings.
         // Keybind and overlay registration is handled by SomniumClientEvents
         // via @Mod.EventBusSubscriber (client-side only, auto-discovered).

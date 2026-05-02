@@ -10,6 +10,8 @@ import net.eclipce.somnium.core.ability.transformation.TransformationInstance;
 import net.eclipce.somnium.core.ability.transformation.TransformationPhase;
 import net.eclipce.somnium.core.data.SomniumCapability;
 import net.eclipce.somnium.core.data.SomniumPlayerData;
+import net.eclipce.somnium.core.effects.OveruseEffect;
+import net.eclipce.somnium.core.effects.SomniumEffects;
 import net.eclipce.somnium.network.SomniumNetwork;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerPlayer;
@@ -243,15 +245,17 @@ public class SomniumTickHandler {
 
         // Handle overuse state transitions
         if (stamina.consumeEnteredOveruse()) {
-            // Just entered a new overuse stage — remove old effects, apply new
-            removeAllOveruseEffects(player);
-            applyOveruseEffects(player, stamina.getOveruseStage(),
-                    stamina.getEffectTimer());
+            // Entered a new overuse stage — remove old effect, apply new Overuse effect
+            player.removeEffect(SomniumEffects.OVERUSE.get());
+            player.addEffect(OveruseEffect.createInstance(
+                    SomniumEffects.OVERUSE.get(),
+                    stamina.getOveruseStage(),
+                    stamina.getEffectTimer()));
         }
 
         if (stamina.consumeEffectsExpired()) {
-            // Effect timer ran out — remove all overuse effects
-            removeAllOveruseEffects(player);
+            // Effect timer ran out — remove Overuse effect
+            player.removeEffect(SomniumEffects.OVERUSE.get());
         }
 
         // Tick custom meters
@@ -269,45 +273,5 @@ public class SomniumTickHandler {
                 }
             }
         }
-    }
-
-    /**
-     * Applies overuse effects for the given stage with the specified duration.
-     */
-    private static void applyOveruseEffects(ServerPlayer player, int stage, int durationTicks) {
-        if (stage >= 1) {
-            int slowAmp = stage >= 3 ? 1 : 0;
-            player.addEffect(new net.minecraft.world.effect.MobEffectInstance(
-                    net.minecraft.world.effect.MobEffects.MOVEMENT_SLOWDOWN,
-                    durationTicks, slowAmp, true, false, true));
-        }
-        if (stage >= 2) {
-            int hungerAmp = stage >= 4 ? 1 : 0;
-            player.addEffect(new net.minecraft.world.effect.MobEffectInstance(
-                    net.minecraft.world.effect.MobEffects.HUNGER,
-                    durationTicks, hungerAmp, true, false, true));
-        }
-        if (stage >= 3) {
-            int weakAmp = stage >= 4 ? 1 : 0;
-            player.addEffect(new net.minecraft.world.effect.MobEffectInstance(
-                    net.minecraft.world.effect.MobEffects.WEAKNESS,
-                    durationTicks, weakAmp, true, false, true));
-        }
-        if (stage >= 5) {
-            player.addEffect(new net.minecraft.world.effect.MobEffectInstance(
-                    net.minecraft.world.effect.MobEffects.WITHER,
-                    durationTicks, 0, true, false, true));
-        }
-    }
-
-    /**
-     * Removes all overuse-related effects from the player.
-     * Only removes the specific effects used by the overuse system.
-     */
-    private static void removeAllOveruseEffects(ServerPlayer player) {
-        player.removeEffect(net.minecraft.world.effect.MobEffects.MOVEMENT_SLOWDOWN);
-        player.removeEffect(net.minecraft.world.effect.MobEffects.HUNGER);
-        player.removeEffect(net.minecraft.world.effect.MobEffects.WEAKNESS);
-        player.removeEffect(net.minecraft.world.effect.MobEffects.WITHER);
     }
 }

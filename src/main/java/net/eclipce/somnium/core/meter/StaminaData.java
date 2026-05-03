@@ -99,6 +99,7 @@ public class StaminaData {
     // ── State transition flags (consumed once by tick handler) ──
     private boolean justEnteredOveruse = false;
     private boolean effectsJustExpired = false;
+    private boolean justEnteredGrace = false;
 
     // ═══════════════════════════════════════════════════════════════════
     //  Construction
@@ -153,6 +154,13 @@ public class StaminaData {
         return val;
     }
 
+    /** Consumes and returns the justEnteredGrace flag. */
+    public boolean consumeEnteredGrace() {
+        boolean val = justEnteredGrace;
+        justEnteredGrace = false;
+        return val;
+    }
+
     // ═══════════════════════════════════════════════════════════════════
     //  Value manipulation
     // ═══════════════════════════════════════════════════════════════════
@@ -184,6 +192,23 @@ public class StaminaData {
     }
 
     /**
+     * Drains stamina WITHOUT triggering the overuse system.
+     * The drain still applies (stamina goes negative if needed)
+     * and abilities are still blocked while negative, but no grace/overuse
+     * processing occurs. Useful for utility abilities, self-heals, etc.
+     *
+     * @param amount the base amount to drain (before modifier)
+     * @return the actual amount drained
+     */
+    public float drainWithoutOveruse(float amount) {
+        if (amount <= 0) return 0;
+        float modified = amount * drainModifier;
+        currentValue -= modified;
+        regenCooldown = 0;
+        return modified;
+    }
+
+    /**
      * Called when stamina crosses from ≥0 to <0.
      * Handles grace, overuse entry, and window management.
      */
@@ -201,6 +226,7 @@ public class StaminaData {
                 graceUsed = true;
                 windowTimer = OVERUSE_WINDOW_TICKS;
                 regenHaltTimer = GRACE_HALT_TICKS;
+                justEnteredGrace = true;
                 // No overuse effect — just blocked until regen recovers
             }
         } else {
@@ -274,6 +300,7 @@ public class StaminaData {
         effectTimer = 0;
         justEnteredOveruse = false;
         effectsJustExpired = false;
+        justEnteredGrace = false;
     }
 
     /** Public reset for commands. */

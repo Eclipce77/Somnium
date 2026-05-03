@@ -732,15 +732,61 @@ public final class SomniumCommand {
         if (data == null) { context.getSource().sendFailure(Component.literal("No data.")); return 0; }
 
         net.eclipce.somnium.core.meter.StaminaData stamina = data.getStaminaData();
-        context.getSource().sendSuccess(() -> Component.literal("Stamina for ")
+
+        // Basic value
+        context.getSource().sendSuccess(() -> Component.literal("=== Stamina for ")
                 .append(player.getDisplayName())
-                .append(": ")
+                .append(" ===")
+                .withStyle(ChatFormatting.YELLOW), false);
+
+        context.getSource().sendSuccess(() -> Component.literal("  Value: ")
                 .append(Component.literal(String.format("%.1f / %.1f", stamina.getValue(), stamina.getMaxValue()))
-                        .withStyle(ChatFormatting.YELLOW))
-                .append(stamina.isInOveruse()
-                        ? Component.literal(" [OVERUSE Stage " + stamina.getOveruseStage() + "]")
-                        .withStyle(ChatFormatting.RED)
-                        : Component.literal("")), false);
+                        .withStyle(stamina.getValue() < 0 ? ChatFormatting.RED : ChatFormatting.GREEN)), false);
+
+        context.getSource().sendSuccess(() -> Component.literal("  Drain Modifier: ")
+                .append(Component.literal(String.format("%.2fx", stamina.getDrainModifier()))
+                        .withStyle(ChatFormatting.AQUA)), false);
+
+        // Overuse state
+        if (stamina.getOveruseStage() > 0 || stamina.isGraceUsed()) {
+            context.getSource().sendSuccess(() -> Component.literal("  Grace Used: ")
+                    .append(Component.literal(stamina.isGraceUsed() ? "Yes" : "No")
+                            .withStyle(stamina.isGraceUsed() ? ChatFormatting.RED : ChatFormatting.GREEN)), false);
+
+            context.getSource().sendSuccess(() -> Component.literal("  Overuse Stage: ")
+                    .append(Component.literal(String.valueOf(stamina.getOveruseStage()))
+                            .withStyle(stamina.getOveruseStage() > 0 ? ChatFormatting.RED : ChatFormatting.GRAY)), false);
+
+            context.getSource().sendSuccess(() -> Component.literal("  In Overuse: ")
+                    .append(Component.literal(stamina.isInOveruse() ? "Yes" : "No")
+                            .withStyle(stamina.isInOveruse() ? ChatFormatting.RED : ChatFormatting.GREEN)), false);
+
+            if (stamina.getWindowTimer() > 0) {
+                int windowSec = stamina.getWindowTimer() / 20;
+                context.getSource().sendSuccess(() -> Component.literal("  Window Timer: ")
+                        .append(Component.literal(windowSec + "s remaining")
+                                .withStyle(ChatFormatting.GOLD)), false);
+            }
+
+            if (stamina.getEffectTimer() > 0) {
+                int effectSec = stamina.getEffectTimer() / 20;
+                context.getSource().sendSuccess(() -> Component.literal("  Effect Timer: ")
+                        .append(Component.literal(effectSec + "s remaining")
+                                .withStyle(ChatFormatting.RED)), false);
+            }
+
+            if (stamina.getRegenHaltTimer() > 0) {
+                int haltSec = stamina.getRegenHaltTimer() / 20;
+                context.getSource().sendSuccess(() -> Component.literal("  Regen Halt: ")
+                        .append(Component.literal(haltSec + "s remaining")
+                                .withStyle(ChatFormatting.DARK_RED)), false);
+            }
+        } else {
+            context.getSource().sendSuccess(() -> Component.literal("  Overuse: ")
+                    .append(Component.literal("None")
+                            .withStyle(ChatFormatting.GREEN)), false);
+        }
+
         return 1;
     }
 

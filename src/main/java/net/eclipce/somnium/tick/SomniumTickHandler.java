@@ -12,6 +12,8 @@ import net.eclipce.somnium.core.data.SomniumCapability;
 import net.eclipce.somnium.core.data.SomniumPlayerData;
 import net.eclipce.somnium.core.effects.OveruseEffect;
 import net.eclipce.somnium.core.effects.SomniumEffects;
+import net.eclipce.somnium.core.effects.OveruseEffect;
+import net.eclipce.somnium.core.effects.SomniumEffects;
 import net.eclipce.somnium.network.SomniumNetwork;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerPlayer;
@@ -243,19 +245,34 @@ public class SomniumTickHandler {
         net.eclipce.somnium.core.meter.StaminaData stamina = data.getStaminaData();
         stamina.tick();
 
-        // Handle overuse state transitions
+        // Fire grace event
+        if (stamina.consumeEnteredGrace()) {
+            net.minecraftforge.common.MinecraftForge.EVENT_BUS.post(
+                    new net.eclipce.somnium.event.SomniumOveruseEvent.Grace(player));
+        }
+
+        // Fire overuse enter event + apply Overuse effect
         if (stamina.consumeEnteredOveruse()) {
-            // Entered a new overuse stage — remove old effect, apply new Overuse effect
             player.removeEffect(SomniumEffects.OVERUSE.get());
             player.addEffect(OveruseEffect.createInstance(
                     SomniumEffects.OVERUSE.get(),
                     stamina.getOveruseStage(),
                     stamina.getEffectTimer()));
+
+            net.minecraftforge.common.MinecraftForge.EVENT_BUS.post(
+                    new net.eclipce.somnium.event.SomniumOveruseEvent.Enter(
+                            player, stamina.getOveruseStage(),
+                            stamina.getEffectTimer()));
         }
 
+        // Fire overuse leave event + remove effect
         if (stamina.consumeEffectsExpired()) {
-            // Effect timer ran out — remove Overuse effect
+            int previousStage = stamina.getOveruseStage();
             player.removeEffect(SomniumEffects.OVERUSE.get());
+
+            net.minecraftforge.common.MinecraftForge.EVENT_BUS.post(
+                    new net.eclipce.somnium.event.SomniumOveruseEvent.Leave(
+                            player, previousStage));
         }
 
         // Tick custom meters

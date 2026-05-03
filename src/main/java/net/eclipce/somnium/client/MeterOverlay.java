@@ -33,6 +33,12 @@ public class MeterOverlay implements IGuiOverlay {
     private static final ResourceLocation DEFAULT_FILL =
             new ResourceLocation(Somnium.MOD_ID, "textures/gui/bar/energy/meter_bar_energy.png");
 
+    // Stamina-specific textures
+    private static final ResourceLocation STAMINA_NEGATIVE =
+            new ResourceLocation(Somnium.MOD_ID, "textures/gui/bar/energy/meter_bar_stamina_negative.png");
+    private static final ResourceLocation STAMINA_OVERUSE =
+            new ResourceLocation(Somnium.MOD_ID, "textures/gui/bar/energy/meter_bar_stamina_overuse.png");
+
     // Meter texture dimensions
     private static final int TEX_WIDTH = 26;
     private static final int TEX_HEIGHT = 129;
@@ -195,30 +201,82 @@ public class MeterOverlay implements IGuiOverlay {
         }
     }
 
+    /** Ticks per minute — used to calculate overuse timer fraction. */
+    private static final int TICKS_PER_MINUTE = 1200;
+
     /**
-     * Renders the stamina meter. Uses StaminaData for fraction (handles negative overuse values).
-     * No color tint for stamina.
+     * Renders the stamina meter with negative fill and overuse timer.
+     *
+     * <p>Three visual layers on top of the frame:</p>
+     * <ol>
+     *     <li><b>Normal fill (white):</b> bottom-to-top when stamina ≥ 0</li>
+     *     <li><b>Negative fill (red):</b> bottom-to-top when stamina &lt; 0,
+     *         amount proportional to how negative the stamina is</li>
+     *     <li><b>Overuse timer:</b> overlays on top, starts full when overuse
+     *         begins, counts down until overuse ends</li>
+     * </ol>
      */
     private void renderStamina(GuiGraphics graphics, int x, int y, StaminaData stamina) {
-        // Render frame
+        // Layer 1: Frame
         RenderSystem.enableBlend();
         graphics.blit(DEFAULT_FRAME, x, y,
                 0, 0, TEX_WIDTH, TEX_HEIGHT,
                 TEX_WIDTH, TEX_HEIGHT);
         RenderSystem.disableBlend();
 
-        // Render fill (bottom-to-top, no color tint)
-        float fraction = stamina.getFraction(); // clamped 0-1, negative = 0
-        int fillPixels = Math.round(TEX_HEIGHT * fraction);
-        if (fillPixels > 0) {
-            RenderSystem.enableBlend();
-            int fillStartY = y + TEX_HEIGHT - fillPixels;
-            int texV = TEX_HEIGHT - fillPixels;
-            graphics.blit(DEFAULT_FILL, x, fillStartY,
-                    0, texV,
-                    TEX_WIDTH, fillPixels,
-                    TEX_WIDTH, TEX_HEIGHT);
-            RenderSystem.disableBlend();
+        float currentValue = stamina.getValue();
+        float maxValue = stamina.getMaxValue();
+
+        if (currentValue >= 0) {
+            // Layer 2a: Normal fill (white) — bottom-to-top
+            float fraction = stamina.getFraction();
+            int fillPixels = Math.round(TEX_HEIGHT * fraction);
+            if (fillPixels > 0) {
+                RenderSystem.enableBlend();
+                int fillStartY = y + TEX_HEIGHT - fillPixels;
+                int texV = TEX_HEIGHT - fillPixels;
+                graphics.blit(DEFAULT_FILL, x, fillStartY,
+                        0, texV,
+                        TEX_WIDTH, fillPixels,
+                        TEX_WIDTH, TEX_HEIGHT);
+                RenderSystem.disableBlend();
+            }
+        } else {
+            // Layer 2b: Negative fill (red) — bottom-to-top
+            // Amount is proportional to how negative: |-currentValue| / maxValue
+            float negativeFraction = Math.min(1.0f, Math.abs(currentValue) / maxValue);
+            int negPixels = Math.round(TEX_HEIGHT * negativeFraction);
+            if (negPixels > 0) {
+                RenderSystem.enableBlend();
+                int fillStartY = y + TEX_HEIGHT - negPixels;
+                int texV = TEX_HEIGHT - negPixels;
+                graphics.blit(STAMINA_NEGATIVE, x, fillStartY,
+                        0, texV,
+                        TEX_WIDTH, negPixels,
+                        TEX_WIDTH, TEX_HEIGHT);
+                RenderSystem.disableBlend();
+            }
+        }
+
+        // Layer 3: Overuse timer overlay — shows while overuse effects are active
+        if (stamina.areEffectsActive() && stamina.getOveruseStage() > 0) {
+            int effectTimer = stamina.getEffectTimer();
+            int initialDuration = (stamina.getOveruseStage() + 1) * TICKS_PER_MINUTE;
+            float overuseFraction = (float) effectTimer / (float) initialDuration;
+            overuseFraction = Math.max(0, Math.min(1.0f, overuseFraction));
+
+            int overusePixels = Math.round(TEX_HEIGHT * overuseFraction);
+            if (overusePixels > 0) {
+                RenderSystem.enableBlend();
+                // Starts full, drains from top — remaining portion at bottom
+                int renderY = y + TEX_HEIGHT - overusePixels;
+                int texV = TEX_HEIGHT - overusePixels;
+                graphics.blit(STAMINA_OVERUSE, x, renderY,
+                        0, texV,
+                        TEX_WIDTH, overusePixels,
+                        TEX_WIDTH, TEX_HEIGHT);
+                RenderSystem.disableBlend();
+            }
         }
     }
 

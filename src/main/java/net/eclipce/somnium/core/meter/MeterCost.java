@@ -21,6 +21,7 @@ public class MeterCost {
     private final Operation operation;
     private final float amount;
     private final float requiredMinimum;
+    private final boolean overuseExempt;
 
     /**
      * Creates a simple drain cost.
@@ -29,7 +30,7 @@ public class MeterCost {
      * @param requiredMin  minimum meter value needed to activate (0 = no requirement)
      */
     public MeterCost(float drainAmount, float requiredMin) {
-        this(Operation.DRAIN, drainAmount, requiredMin);
+        this(Operation.DRAIN, drainAmount, requiredMin, false);
     }
 
     /**
@@ -40,9 +41,23 @@ public class MeterCost {
      * @param requiredMin minimum meter value needed to activate (0 = no requirement)
      */
     public MeterCost(Operation operation, float amount, float requiredMin) {
+        this(operation, amount, requiredMin, false);
+    }
+
+    /**
+     * Creates a meter cost with full control.
+     *
+     * @param operation     the operation to perform
+     * @param amount        the amount/factor for the operation
+     * @param requiredMin   minimum meter value needed to activate (0 = no requirement)
+     * @param overuseExempt if true, stamina drain won't trigger overuse processing
+     */
+    public MeterCost(Operation operation, float amount, float requiredMin,
+                     boolean overuseExempt) {
         this.operation = operation;
         this.amount = amount;
         this.requiredMinimum = requiredMin;
+        this.overuseExempt = overuseExempt;
     }
 
     /** @return the operation type */
@@ -53,6 +68,12 @@ public class MeterCost {
 
     /** @return the minimum meter value required to activate */
     public float getRequiredMinimum() { return requiredMinimum; }
+
+    /**
+     * @return true if this cost should not trigger overuse when applied
+     *         to stamina. Only relevant for stamina costs.
+     */
+    public boolean isOveruseExempt() { return overuseExempt; }
 
     /**
      * Checks if the meter has enough value to activate.
@@ -105,5 +126,20 @@ public class MeterCost {
     /** Divides the meter value. */
     public static MeterCost divide(float factor) {
         return new MeterCost(Operation.DIVIDE, factor, 0);
+    }
+
+    /**
+     * Drains amount, but won't trigger overuse if applied to stamina.
+     * Use for utility/defensive abilities.
+     */
+    public static MeterCost drainExempt(float amount) {
+        return new MeterCost(Operation.DRAIN, amount, 0, true);
+    }
+
+    /**
+     * Drains amount with minimum, won't trigger overuse.
+     */
+    public static MeterCost drainExempt(float amount, float required) {
+        return new MeterCost(Operation.DRAIN, amount, required, true);
     }
 }

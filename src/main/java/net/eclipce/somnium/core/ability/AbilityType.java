@@ -443,8 +443,11 @@ public class AbilityType {
      */
     public void applyMeterCosts(net.eclipce.somnium.core.data.SomniumPlayerData data) {
         if (staminaCost != null) {
-            // Use StaminaData.drain which applies drain modifier and handles overuse
-            data.getStaminaData().drain(staminaCost.getAmount());
+            if (staminaCost.isOveruseExempt()) {
+                data.getStaminaData().drainWithoutOveruse(staminaCost.getAmount());
+            } else {
+                data.getStaminaData().drain(staminaCost.getAmount());
+            }
         }
         for (java.util.Map.Entry<ResourceLocation, net.eclipce.somnium.core.meter.MeterCost> entry
                 : meterCosts.entrySet()) {
@@ -586,6 +589,17 @@ public class AbilityType {
          */
         public Properties staminaCost(float amount) {
             this.staminaCost = net.eclipce.somnium.core.meter.MeterCost.drain(amount, amount);
+            return this;
+        }
+
+        /**
+         * Stamina drain that does NOT trigger overuse processing.
+         * Use for utility, defensive, or healing abilities.
+         *
+         * @param amount stamina to drain
+         */
+        public Properties staminaCostExempt(float amount) {
+            this.staminaCost = net.eclipce.somnium.core.meter.MeterCost.drainExempt(amount);
             return this;
         }
 

@@ -1,6 +1,7 @@
 package net.eclipce.somnium.command;
 
 import com.mojang.brigadier.CommandDispatcher;
+import com.mojang.brigadier.arguments.DoubleArgumentType;
 import com.mojang.brigadier.arguments.FloatArgumentType;
 import com.mojang.brigadier.context.CommandContext;
 import com.mojang.brigadier.exceptions.CommandSyntaxException;
@@ -118,6 +119,7 @@ public final class SomniumCommand {
                         .then(buildPlayerCommands())
                         .then(buildTagCommands())
                         .then(buildMeterCommands())
+                        .then(buildCompositionCommands())
         );
     }
 
@@ -933,4 +935,108 @@ public final class SomniumCommand {
 
     // Private constructor — utility class
     private SomniumCommand() {}
+
+    // ═══════════════════════════════════════════════════════════════════
+    //  Composition commands
+    // ═══════════════════════════════════════════════════════════════════
+
+    private static com.mojang.brigadier.builder.LiteralArgumentBuilder<CommandSourceStack>
+    buildCompositionCommands() {
+        return Commands.literal("composition")
+                .then(Commands.literal("get")
+                        .then(Commands.argument("player", EntityArgument.player())
+                                .executes(SomniumCommand::compositionGet)))
+                .then(Commands.literal("set")
+                        .then(Commands.argument("player", EntityArgument.player())
+                                .then(Commands.argument("value", DoubleArgumentType.doubleArg(0))
+                                        .executes(SomniumCommand::compositionSet))))
+                .then(Commands.literal("add")
+                        .then(Commands.argument("player", EntityArgument.player())
+                                .then(Commands.argument("amount", DoubleArgumentType.doubleArg())
+                                        .executes(SomniumCommand::compositionAdd))))
+                .then(Commands.literal("reset")
+                        .then(Commands.argument("player", EntityArgument.player())
+                                .executes(SomniumCommand::compositionReset)));
+    }
+
+    private static int compositionGet(CommandContext<CommandSourceStack> context)
+            throws CommandSyntaxException {
+        ServerPlayer player = EntityArgument.getPlayer(context, "player");
+        SomniumPlayerData data = SomniumCapability.get(player);
+        if (data == null) { context.getSource().sendFailure(Component.literal("No data.")); return 0; }
+
+        net.eclipce.somnium.core.composition.CompositionData comp = data.getComposition();
+        net.eclipce.somnium.core.meter.StaminaData stamina = data.getStaminaData();
+
+        context.getSource().sendSuccess(() -> Component.literal("=== Composition for ")
+                .append(player.getDisplayName())
+                .append(" ===")
+                .withStyle(ChatFormatting.YELLOW), false);
+
+        context.getSource().sendSuccess(() -> Component.literal("  Value: ")
+                .append(Component.literal(String.format("%.2f (int: %d)", comp.getValue(), comp.getIntValue()))
+                        .withStyle(ChatFormatting.GREEN)), false);
+
+        context.getSource().sendSuccess(() -> Component.literal("  Growth Multiplier: ")
+                .append(Component.literal(String.format("%.4f", comp.getGrowthMultiplier()))
+                        .withStyle(ChatFormatting.AQUA)), false);
+
+        context.getSource().sendSuccess(() -> Component.literal("  Effective Max Stamina: ")
+                .append(Component.literal(String.format("%.0f (base %d + %d composition)",
+                                comp.getEffectiveMaxStamina(),
+                                net.eclipce.somnium.core.composition.CompositionData.BASE_STAMINA,
+                                comp.getIntValue()))
+                        .withStyle(ChatFormatting.GOLD)), false);
+
+        return 1;
+    }
+
+    private static int compositionSet(CommandContext<CommandSourceStack> context)
+            throws CommandSyntaxException {
+        ServerPlayer player = EntityArgument.getPlayer(context, "player");
+        double value = DoubleArgumentType.getDouble(context, "value");
+        SomniumPlayerData data = SomniumCapability.get(player);
+        if (data == null) { context.getSource().sendFailure(Component.literal("No data.")); return 0; }
+
+        data.getComposition().setValue(value);
+        SomniumNetwork.syncToClient(player);
+        context.getSource().sendSuccess(() -> Component.literal("Set composition to ")
+                .append(Component.literal(String.format("%.2f", value))
+                        .withStyle(ChatFormatting.GREEN))
+                .append(" for ").append(player.getDisplayName()), true);
+        return 1;
+    }
+
+    private static int compositionAdd(CommandContext<CommandSourceStack> context)
+            throws CommandSyntaxException {
+        ServerPlayer player = EntityArgument.getPlayer(context, "player");
+        double amount = DoubleArgumentType.getDouble(context, "amount");
+        SomniumPlayerData data = SomniumCapability.get(player);
+        if (data == null) { context.getSource().sendFailure(Component.literal("No data.")); return 0; }
+
+        data.getComposition().addDirect(amount);
+        SomniumNetwork.syncToClient(player);
+        context.getSource().sendSuccess(() -> Component.literal("Added ")
+                .append(Component.literal(String.format("%.2f", amount))
+                        .withStyle(ChatFormatting.GREEN))
+                .append(" composition to ").append(player.getDisplayName())
+                .append(" (now ").append(Component.literal(
+                                String.format("%.2f", data.getComposition().getValue()))
+                        .withStyle(ChatFormatting.YELLOW))
+                .append(")"), true);
+        return 1;
+    }
+
+    private static int compositionReset(CommandContext<CommandSourceStack> context)
+            throws CommandSyntaxException {
+        ServerPlayer player = EntityArgument.getPlayer(context, "player");
+        SomniumPlayerData data = SomniumCapability.get(player);
+        if (data == null) { context.getSource().sendFailure(Component.literal("No data.")); return 0; }
+
+        data.getComposition().setValue(0);
+        SomniumNetwork.syncToClient(player);
+        context.getSource().sendSuccess(() -> Component.literal("Reset composition for ")
+                .append(player.getDisplayName()), true);
+        return 1;
+    }
 }

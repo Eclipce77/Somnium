@@ -68,6 +68,21 @@ public class ProgressionHandler {
         SomniumPlayerData data = SomniumCapability.get(player);
         if (data == null) return;
 
+        // Grant composition growth for ability usage (unless opted out)
+        if (!abilityType.isCompositionOptOut()) {
+            net.eclipce.somnium.core.composition.CompositionData comp = data.getComposition();
+            double oldValue = comp.getValue();
+            double gained = comp.addGrowth(
+                    net.eclipce.somnium.core.composition.CompositionData.GAIN_ABILITY_USE,
+                    net.eclipce.somnium.core.composition.CompositionSource.ABILITY_USE);
+            if (gained > 0) {
+                net.minecraftforge.common.MinecraftForge.EVENT_BUS.post(
+                        new net.eclipce.somnium.event.SomniumCompositionEvent(
+                                player, oldValue, comp.getValue(), gained,
+                                net.eclipce.somnium.core.composition.CompositionSource.ABILITY_USE));
+            }
+        }
+
         ResourceLocation usedKey = SomniumRegistries.getAbilityKey(abilityType);
         if (usedKey == null) return;
 
@@ -117,6 +132,28 @@ public class ProgressionHandler {
      */
     @SubscribeEvent
     public static void onLivingDeath(LivingDeathEvent event) {
+        // ── Death penalty: composition loss ──
+        if (event.getEntity() instanceof ServerPlayer deadPlayer) {
+            SomniumPlayerData deadData = SomniumCapability.get(deadPlayer);
+            if (deadData != null) {
+                // Check gamerule (default: composition loss on death is enabled)
+                boolean lossEnabled = deadPlayer.level().getGameRules()
+                        .getBoolean(net.eclipce.somnium.SomniumGameRules.COMPOSITION_LOSS_ON_DEATH);
+                if (lossEnabled) {
+                    net.eclipce.somnium.core.composition.CompositionData comp =
+                            deadData.getComposition();
+                    double lost = comp.applyDeathPenalty(
+                            net.eclipce.somnium.core.composition.CompositionData.DEFAULT_DEATH_LOSS_PERCENT,
+                            net.eclipce.somnium.core.composition.CompositionData.DEFAULT_DEATH_LOSS_CAP);
+                    if (lost > 0) {
+                        Somnium.LOGGER.debug("Player {} lost {} composition on death",
+                                deadPlayer.getName().getString(), String.format("%.1f", lost));
+                    }
+                }
+            }
+        }
+
+        // ── Kill tracking for progression ──
         if (!(event.getSource().getEntity() instanceof ServerPlayer player)) return;
 
         SomniumPlayerData data = SomniumCapability.get(player);
@@ -167,8 +204,8 @@ public class ProgressionHandler {
      * progress was changed.
      */
     private static boolean updateUsageCondition(UnlockCondition condition,
-                                                 CompoundTag progress,
-                                                 ResourceLocation usedAbilityKey) {
+                                                CompoundTag progress,
+                                                ResourceLocation usedAbilityKey) {
         if (condition instanceof AbilityUsageCondition usage) {
             ResourceLocation targetKey = usage.getTargetAbilityKey();
             if (usedAbilityKey.equals(targetKey)) {
@@ -197,9 +234,9 @@ public class ProgressionHandler {
      * Returns true if any progress was changed.
      */
     private static boolean updateKillCondition(UnlockCondition condition,
-                                                CompoundTag progress,
-                                                ServerPlayer player,
-                                                SomniumPlayerData data) {
+                                               CompoundTag progress,
+                                               ServerPlayer player,
+                                               SomniumPlayerData data) {
         if (condition instanceof KillCondition kill) {
             if (kill.hasAbilityRequirement()) {
                 // Check if the required ability is currently active

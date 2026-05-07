@@ -12,8 +12,6 @@ import net.eclipce.somnium.core.data.SomniumCapability;
 import net.eclipce.somnium.core.data.SomniumPlayerData;
 import net.eclipce.somnium.core.effects.OveruseEffect;
 import net.eclipce.somnium.core.effects.SomniumEffects;
-import net.eclipce.somnium.core.effects.OveruseEffect;
-import net.eclipce.somnium.core.effects.SomniumEffects;
 import net.eclipce.somnium.network.SomniumNetwork;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerPlayer;
@@ -240,10 +238,58 @@ public class SomniumTickHandler {
      * Ticks all meters (stamina + custom). Handles regeneration and
      * depletion effects.
      */
+    /** UUID for the composition health modifier. */
+    private static final java.util.UUID COMPOSITION_HEALTH_UUID =
+            java.util.UUID.fromString("c3d4e5f6-a7b8-4c9d-0e1f-2a3b4c5d6e7f");
+
     private static void tickMeters(ServerPlayer player, SomniumPlayerData data) {
-        // Tick stamina
+        // ── Composition → Stamina max scaling ──
+        net.eclipce.somnium.core.composition.CompositionData composition = data.getComposition();
         net.eclipce.somnium.core.meter.StaminaData stamina = data.getStaminaData();
+
+        // Auto-scale stamina max from composition every tick
+        float compositionMax = composition.getEffectiveMaxStamina();
+        if (Math.abs(stamina.getMaxValue() - compositionMax) > 0.01f) {
+            stamina.setMaxValue(compositionMax);
+        }
+
+        // ── Composition → Health scaling (1 HP per 1000 composition) ──
+        int bonusHealth = composition.getIntValue() / 1000;
+        var healthAttr = player.getAttribute(net.minecraft.world.entity.ai.attributes.Attributes.MAX_HEALTH);
+        if (healthAttr != null) {
+            var existing = healthAttr.getModifier(COMPOSITION_HEALTH_UUID);
+            double expectedBonus = bonusHealth * 1.0;
+            if (existing == null || Math.abs(existing.getAmount() - expectedBonus) > 0.01) {
+                healthAttr.removeModifier(COMPOSITION_HEALTH_UUID);
+                if (expectedBonus > 0) {
+                    healthAttr.addPermanentModifier(
+                            new net.minecraft.world.entity.ai.attributes.AttributeModifier(
+                                    COMPOSITION_HEALTH_UUID, "Somnium composition health",
+                                    expectedBonus,
+                                    net.minecraft.world.entity.ai.attributes.AttributeModifier.Operation.ADDITION));
+                }
+            }
+        }
+
+        // Track stamina depletion for recovery cycle
+        float oldStamina = stamina.getValue();
+
+        // Tick stamina
         stamina.tick();
+
+        // Check if stamina just went to/below 0 — mark for recovery tracking
+        if (oldStamina > 0 && stamina.getValue() <= 0) {
+            composition.markStaminaDepleted();
+        }
+
+        // Check if stamina just reached max — complete recovery cycle
+        if (stamina.isFull() && composition.isStaminaRecoveryCyclePending()) {
+            if (composition.completeRecoveryCycle()) {
+                grantComposition(player, data,
+                        net.eclipce.somnium.core.composition.CompositionData.GAIN_STAMINA_RECOVERY,
+                        net.eclipce.somnium.core.composition.CompositionSource.STAMINA_RECOVERY);
+            }
+        }
 
         // Fire grace event
         if (stamina.consumeEnteredGrace()) {
@@ -265,10 +311,18 @@ public class SomniumTickHandler {
                             stamina.getEffectTimer()));
         }
 
-        // Fire overuse leave event + remove effect
+        // Fire overuse leave event + remove effect + grant composition
         if (stamina.consumeEffectsExpired()) {
             int previousStage = stamina.getOveruseStage();
             player.removeEffect(SomniumEffects.OVERUSE.get());
+
+            // Grant composition for surviving overuse (scaled by stage)
+            if (previousStage > 0) {
+                double overuseGain = net.eclipce.somnium.core.composition.CompositionData
+                        .GAIN_OVERUSE_SURVIVAL_PER_STAGE * previousStage;
+                grantComposition(player, data, overuseGain,
+                        net.eclipce.somnium.core.composition.CompositionSource.OVERUSE_SURVIVAL);
+            }
 
             net.minecraftforge.common.MinecraftForge.EVENT_BUS.post(
                     new net.eclipce.somnium.event.SomniumOveruseEvent.Leave(
@@ -290,5 +344,21 @@ public class SomniumTickHandler {
                 }
             }
         }
+    }
+
+    /**
+     * Grants composition growth and fires the composition event.
+     */
+    private static void grantComposition(ServerPlayer player, SomniumPlayerData data,
+                                         double baseAmount,
+                                         net.eclipce.somnium.core.composition.CompositionSource source) {
+        net.eclipce.somnium.core.composition.CompositionData comp = data.getComposition();
+        double oldValue = comp.getValue();
+        double gained = comp.addGrowth(baseAmount, source);
+        double newValue = comp.getValue();
+
+        net.minecraftforge.common.MinecraftForge.EVENT_BUS.post(
+                new net.eclipce.somnium.event.SomniumCompositionEvent(
+                        player, oldValue, newValue, gained, source));
     }
 }

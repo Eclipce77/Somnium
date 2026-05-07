@@ -76,6 +76,18 @@ public class AbilityInventoryScreen extends Screen {
     private static final ResourceLocation TAB_RIGHT_SEL =
             new ResourceLocation(Somnium.MOD_ID, "textures/gui/inventory/assets/tab_right_middle_selected.png");
 
+    // Type tab icons (16x16)
+    private static final ResourceLocation ICON_TRANSFORMATIONS =
+            new ResourceLocation(Somnium.MOD_ID, "textures/gui/inventory/icons/ability_inventory_transformations.png");
+    private static final ResourceLocation ICON_ABILITIES =
+            new ResourceLocation(Somnium.MOD_ID, "textures/gui/inventory/icons/ability_inventory_abilities.png");
+    private static final ResourceLocation ICON_PASSIVES =
+            new ResourceLocation(Somnium.MOD_ID, "textures/gui/inventory/icons/ability_inventory_passives.png");
+    private static final ResourceLocation[] TYPE_TAB_ICONS = {
+            ICON_TRANSFORMATIONS, ICON_ABILITIES, ICON_PASSIVES
+    };
+    private static final String[] TYPE_TAB_NAMES = {"Transformations", "Abilities", "Passives"};
+
     // Scroll arrows for left power tabs
     private static final ResourceLocation SCROLL_UP =
             new ResourceLocation(Somnium.MOD_ID, "textures/gui/inventory/assets/server_list_move_up.png");
@@ -122,7 +134,6 @@ public class AbilityInventoryScreen extends Screen {
     private static final int RIGHT_TAB_REL_X = 170;
     private static final int[] RIGHT_TAB_REL_Y = {43, 70, 97};
     private static final int RIGHT_TAB_W = 32, RIGHT_TAB_H = 28;
-    private static final String[] TYPE_TAB_LABELS = {"T", "A", "P"};
 
     // Page arrows (abilities mode only)
     private static final int PAGE_ARROW_W = 8, PAGE_ARROW_H = 10;
@@ -438,23 +449,24 @@ public class AbilityInventoryScreen extends Screen {
             graphics.blit(tabTex, tabX, tabY, 0, 0,
                     RIGHT_TAB_W, RIGHT_TAB_H, RIGHT_TAB_W, RIGHT_TAB_H);
 
-            // Determine label
-            String label;
+            // Render icon or category label
             if (i < 3) {
-                label = TYPE_TAB_LABELS[i];
+                // Built-in type tabs: render 16x16 icon centered
+                int iconX = tabX + (RIGHT_TAB_W - 16) / 2;
+                int iconY = tabY + (RIGHT_TAB_H - 16) / 2;
+                graphics.blit(TYPE_TAB_ICONS[i], iconX, iconY, 0, 0,
+                        16, 16, 16, 16);
             } else {
                 int catIndex = i - MODE_CATEGORY_START;
+                String label = "?";
                 if (catIndex >= 0 && catIndex < registeredCategories.size()) {
                     label = registeredCategories.get(catIndex).getTabLabel();
-                } else {
-                    label = "?";
                 }
+                int textX = tabX + (RIGHT_TAB_W - font.width(label)) / 2;
+                int textY = tabY + (RIGHT_TAB_H - font.lineHeight) / 2;
+                graphics.drawString(font, label, textX, textY,
+                        isSelected ? 0xFFFFFF : 0xAAAAAA, false);
             }
-
-            int textX = tabX + (RIGHT_TAB_W - font.width(label)) / 2;
-            int textY = tabY + (RIGHT_TAB_H - font.lineHeight) / 2;
-            graphics.drawString(font, label, textX, textY,
-                    isSelected ? 0xFFFFFF : 0xAAAAAA, false);
         }
     }
 
@@ -693,6 +705,53 @@ public class AbilityInventoryScreen extends Screen {
 
     private void renderTooltips(GuiGraphics graphics, int mouseX, int mouseY) {
         if (heldAbility != null) return;
+
+        // Type tab tooltips (right side)
+        int totalTabs = getTotalTabCount();
+        for (int i = 0; i < totalTabs; i++) {
+            int tabX = leftPos + RIGHT_TAB_REL_X;
+            int tabY = topPos + RIGHT_TAB_REL_Y[0] + i * (RIGHT_TAB_H + 2);
+            if (isInBounds(mouseX, mouseY, tabX, tabY, RIGHT_TAB_W, RIGHT_TAB_H)) {
+                Component name;
+                if (i < 3) {
+                    name = Component.literal(TYPE_TAB_NAMES[i]);
+                } else {
+                    int catIndex = i - MODE_CATEGORY_START;
+                    name = (catIndex >= 0 && catIndex < registeredCategories.size())
+                            ? registeredCategories.get(catIndex).getDisplayName()
+                            : Component.literal("Unknown");
+                }
+                graphics.renderTooltip(font,
+                        List.of(name), Optional.empty(),
+                        mouseX, mouseY);
+                return;
+            }
+        }
+
+        // Power tab tooltips (left side)
+        if (data != null) {
+            java.util.List<net.eclipce.somnium.core.power.Power> powers =
+                    new java.util.ArrayList<>(data.getGrantedPowers());
+            int visibleCount = Math.min(powers.size() - tabScrollOffset, MAX_VISIBLE_TABS);
+            for (int v = 0; v < visibleCount; v++) {
+                int tabIndex = tabScrollOffset + v;
+                int tabX = leftPos + LEFT_TAB_REL_X;
+                int tabY = topPos + LEFT_TAB_START_REL_Y + v * LEFT_TAB_SPACING;
+                if (isInBounds(mouseX, mouseY, tabX, tabY, LEFT_TAB_W, LEFT_TAB_H)) {
+                    net.eclipce.somnium.core.power.Power power = powers.get(tabIndex);
+                    ResourceLocation key = net.eclipce.somnium.core.registry.SomniumRegistries
+                            .getPowerKey(power);
+                    String powerName = key != null ? key.getPath() : "Unknown";
+                    // Capitalize first letter
+                    powerName = powerName.substring(0, 1).toUpperCase()
+                            + powerName.substring(1).replace('_', ' ');
+                    graphics.renderTooltip(font,
+                            List.of(Component.literal(powerName)), Optional.empty(),
+                            mouseX, mouseY);
+                    return;
+                }
+            }
+        }
 
         // Grid tooltips
         int startIndex = gridScrollRow * GRID_COLS;

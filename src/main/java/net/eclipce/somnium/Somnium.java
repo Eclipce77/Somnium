@@ -4,6 +4,7 @@ import com.mojang.logging.LogUtils;
 import net.eclipce.somnium.client.config.SomniumClientConfig;
 import net.eclipce.somnium.command.SomniumCommand;
 import net.eclipce.somnium.core.data.SomniumPlayerData;
+import net.eclipce.somnium.core.effects.SomniumEffects;
 import net.eclipce.somnium.core.registry.SomniumRegistries;
 import net.eclipce.somnium.network.SomniumNetwork;
 import net.eclipce.somnium.test.CuriosTestSetup;
@@ -50,7 +51,10 @@ public class Somnium {
         SomniumNetwork.init();
 
         // Register custom effects (Overuse)
-        net.eclipce.somnium.core.effects.SomniumEffects.init(modEventBus);
+        SomniumEffects.init(modEventBus);
+
+        // Register gamerules
+        SomniumGameRules.init();
 
         // Layer 6: Register client config for ability bar position settings.
         // Keybind and overlay registration is handled by SomniumClientEvents

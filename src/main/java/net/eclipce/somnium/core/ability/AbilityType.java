@@ -66,6 +66,9 @@ public class AbilityType {
     private final java.util.Map<ResourceLocation, net.eclipce.somnium.core.meter.MeterCost> meterCosts;
     @Nullable
     private final String castAnimation;
+    private final boolean compositionOptOut;
+    private final boolean enabledOnGrant;
+    private final boolean forced;
 
     /**
      * Creates an AbilityType with the given properties.
@@ -85,6 +88,9 @@ public class AbilityType {
         this.meterCosts = java.util.Collections.unmodifiableMap(
                 new java.util.LinkedHashMap<>(properties.meterCosts));
         this.castAnimation = properties.castAnimation;
+        this.compositionOptOut = properties.compositionOptOut;
+        this.enabledOnGrant = properties.enabledOnGrant;
+        this.forced = properties.forced;
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -414,6 +420,21 @@ public class AbilityType {
         return castAnimation;
     }
 
+    /** @return true if this ability should NOT grant composition on use */
+    public boolean isCompositionOptOut() {
+        return compositionOptOut;
+    }
+
+    /** @return true if this passive should be auto-enabled when granted */
+    public boolean isEnabledOnGrant() {
+        return enabledOnGrant;
+    }
+
+    /** @return true if this passive is forced on and cannot be toggled off */
+    public boolean isForced() {
+        return forced;
+    }
+
     /**
      * Checks if the player can afford all meter costs for this ability.
      *
@@ -488,6 +509,9 @@ public class AbilityType {
         final java.util.Map<ResourceLocation, net.eclipce.somnium.core.meter.MeterCost> meterCosts =
                 new java.util.LinkedHashMap<>();
         @Nullable String castAnimation = null;
+        boolean compositionOptOut = false;
+        boolean enabledOnGrant = false;
+        boolean forced = false;
 
         /**
          * Sets the activation type. Defaults to {@link ActivationType#INSTANT}.
@@ -636,6 +660,34 @@ public class AbilityType {
          */
         public Properties castAnimation(String animationName) {
             this.castAnimation = animationName;
+            return this;
+        }
+
+        /**
+         * Opts this ability out of granting composition on use.
+         * Default is opt-in (abilities grant composition).
+         */
+        public Properties compositionOptOut() {
+            this.compositionOptOut = true;
+            return this;
+        }
+
+        /**
+         * For PASSIVE abilities: automatically enables the passive when
+         * the player first receives it, giving them the effect immediately.
+         */
+        public Properties enabledOnGrant() {
+            this.enabledOnGrant = true;
+            return this;
+        }
+
+        /**
+         * For PASSIVE abilities: permanently forces the passive on while
+         * the player has the power. Cannot be toggled off by the player.
+         */
+        public Properties forced() {
+            this.forced = true;
+            this.enabledOnGrant = true; // forced implies enabled on grant
             return this;
         }
     }

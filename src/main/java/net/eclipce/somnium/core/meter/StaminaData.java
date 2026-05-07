@@ -36,7 +36,7 @@ public class StaminaData {
     public static final float DEFAULT_MAX = 100f;
     public static final float DEFAULT_REGEN_RATE = 0.028f;
     public static final int DEFAULT_REGEN_DELAY = 60;
-    public static final int MAX_OVERUSE_STAGE = 5;
+    public static final int MAX_OVERUSE_STAGE = 3;
 
     /** Grace period regen halt in ticks (5 seconds). */
     private static final int GRACE_HALT_TICKS = 100;

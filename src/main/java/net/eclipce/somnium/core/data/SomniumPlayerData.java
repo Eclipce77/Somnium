@@ -91,6 +91,7 @@ public class SomniumPlayerData {
     private static final String TAG_PLAYER_TAGS = "PlayerTags";
     private static final String TAG_STAMINA = "Stamina";
     private static final String TAG_METERS = "Meters";
+    private static final String TAG_COMPOSITION = "Composition";
     private static final String TAG_METER_ID = "MeterId";
 
     // ═══════════════════════════════════════════════════════════════════
@@ -176,6 +177,9 @@ public class SomniumPlayerData {
      */
     private final net.eclipce.somnium.core.meter.StaminaData staminaData =
             new net.eclipce.somnium.core.meter.StaminaData();
+
+    private final net.eclipce.somnium.core.composition.CompositionData compositionData =
+            new net.eclipce.somnium.core.composition.CompositionData();
 
     /**
      * Custom meters — one instance per registered MeterDefinition, created on demand.
@@ -841,6 +845,11 @@ public class SomniumPlayerData {
         return staminaData;
     }
 
+    /** @return the player's composition (growth) data */
+    public net.eclipce.somnium.core.composition.CompositionData getComposition() {
+        return compositionData;
+    }
+
     // ═══════════════════════════════════════════════════════════════════
     //  Custom meters
     // ═══════════════════════════════════════════════════════════════════
@@ -1062,6 +1071,7 @@ public class SomniumPlayerData {
 
         // Stamina
         this.staminaData.copyFrom(source.staminaData);
+        this.compositionData.copyFrom(source.compositionData);
 
         // Custom meters
         this.meters.clear();
@@ -1220,6 +1230,7 @@ public class SomniumPlayerData {
 
         // Stamina
         root.put(TAG_STAMINA, staminaData.serialize());
+        root.put(TAG_COMPOSITION, compositionData.serialize());
 
         // Custom meters
         ListTag metersTag = new ListTag();
@@ -1401,6 +1412,14 @@ public class SomniumPlayerData {
                     net.eclipce.somnium.core.meter.StaminaData.deserialize(
                             root.getCompound(TAG_STAMINA));
             staminaData.copyFrom(loaded);
+        }
+
+        // Composition
+        if (root.contains(TAG_COMPOSITION)) {
+            net.eclipce.somnium.core.composition.CompositionData loadedComp =
+                    net.eclipce.somnium.core.composition.CompositionData.deserialize(
+                            root.getCompound(TAG_COMPOSITION));
+            compositionData.copyFrom(loadedComp);
         }
 
         // Custom meters

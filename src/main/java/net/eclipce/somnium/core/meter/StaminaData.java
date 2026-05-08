@@ -340,14 +340,10 @@ public class StaminaData {
             regenHaltTimer--;
         }
 
-        // Regeneration
-        if (currentValue < maxValue && regenHaltTimer <= 0) {
+        // Regeneration — blocked while overuse effects are active
+        if (currentValue < maxValue && regenHaltTimer <= 0 && !areEffectsActive()) {
             if (regenCooldown >= regenDelay) {
-                float rate = regenRate;
-                if (inOveruse && overuseStage > 0) {
-                    rate *= 1.0f / (overuseStage * 2);
-                }
-                currentValue += rate;
+                currentValue += regenRate;
                 if (currentValue > maxValue) currentValue = maxValue;
                 if (currentValue >= 0 && inOveruse) {
                     leaveOveruse();
@@ -364,13 +360,9 @@ public class StaminaData {
         if (effectTimer > 0) effectTimer--;
         if (regenHaltTimer > 0) regenHaltTimer--;
 
-        if (currentValue < maxValue && regenHaltTimer <= 0) {
+        if (currentValue < maxValue && regenHaltTimer <= 0 && !areEffectsActive()) {
             if (regenCooldown >= regenDelay) {
-                float rate = regenRate;
-                if (inOveruse && overuseStage > 0) {
-                    rate *= 1.0f / (overuseStage * 2);
-                }
-                currentValue += rate;
+                currentValue += regenRate;
                 if (currentValue > maxValue) currentValue = maxValue;
             } else {
                 regenCooldown++;

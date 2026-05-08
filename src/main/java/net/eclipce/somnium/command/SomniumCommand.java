@@ -30,6 +30,8 @@ import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerPlayer;
 import net.minecraftforge.registries.IForgeRegistry;
 
+import java.util.Set;
+
 /**
  * Brigadier command tree for the Somnium API.
  *
@@ -114,6 +116,9 @@ public final class SomniumCommand {
         dispatcher.register(
                 Commands.literal("somnium")
                         .requires(source -> source.hasPermission(PERMISSION_LEVEL))
+                        .executes(SomniumCommand::welcomeMessage)
+                        .then(Commands.literal("help")
+                                .executes(SomniumCommand::helpMessage))
                         .then(buildPowerCommands())
                         .then(buildAbilityCommands())
                         .then(buildPlayerCommands())
@@ -122,6 +127,62 @@ public final class SomniumCommand {
                         .then(buildCompositionCommands())
                         .then(buildPowerLevelCommands())
         );
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    //  /somnium — welcome & help
+    // ═══════════════════════════════════════════════════════════════════
+
+    private static int welcomeMessage(CommandContext<CommandSourceStack> context) {
+        CommandSourceStack source = context.getSource();
+        source.sendSuccess(() -> Component.literal("═══ Somnium API ═══")
+                .withStyle(ChatFormatting.GOLD), false);
+        source.sendSuccess(() -> Component.literal("A highly customizable Power and Ability API, for those who can dream it possible.")
+                .withStyle(ChatFormatting.GRAY), false);
+        source.sendSuccess(() -> Component.literal(""), false);
+        source.sendSuccess(() -> Component.literal("GitHub: ")
+                .withStyle(ChatFormatting.YELLOW)
+                .append(Component.literal("https://github.com/Eclipce77/Somnium")
+                        .withStyle(style -> style.withColor(ChatFormatting.AQUA)
+                                .withClickEvent(new net.minecraft.network.chat.ClickEvent(
+                                        net.minecraft.network.chat.ClickEvent.Action.OPEN_URL,
+                                        "https://github.com/Eclipce77/Somnium"))
+                                .withUnderlined(true))), false);
+        source.sendSuccess(() -> Component.literal("Issues: ")
+                .withStyle(ChatFormatting.YELLOW)
+                .append(Component.literal("https://github.com/Eclipce77/Somnium/issues")
+                        .withStyle(style -> style.withColor(ChatFormatting.AQUA)
+                                .withClickEvent(new net.minecraft.network.chat.ClickEvent(
+                                        net.minecraft.network.chat.ClickEvent.Action.OPEN_URL,
+                                        "https://github.com/Eclipce77/Somnium/issues"))
+                                .withUnderlined(true))), false);
+        source.sendSuccess(() -> Component.literal("Use /somnium help for commands.")
+                .withStyle(ChatFormatting.GRAY), false);
+        return 1;
+    }
+
+    private static int helpMessage(CommandContext<CommandSourceStack> context) {
+        CommandSourceStack source = context.getSource();
+        source.sendSuccess(() -> Component.literal("═══ Somnium Commands ═══")
+                .withStyle(ChatFormatting.GOLD), false);
+
+        sendHelp(source, "/somnium", "Welcome message and links");
+        sendHelp(source, "/somnium help", "Shows this list");
+        sendHelp(source, "/somnium player [player]", "Shows all Somnium stats for a player");
+        sendHelp(source, "/somnium power add/remove <player> <power>", "Grant or revoke a power");
+        sendHelp(source, "/somnium ability unlock/lock <player> <ability>", "Unlock or lock an ability");
+        sendHelp(source, "/somnium tag add/remove/list <player> <tag>", "Manage player tags");
+        sendHelp(source, "/somnium meter stamina get/set/add <player>", "View or modify stamina");
+        sendHelp(source, "/somnium composition get/set/add [player]", "View or modify composition");
+        sendHelp(source, "/somnium powerlevel get/setlevel/addxp <player> <power>", "View or modify power level");
+        return 1;
+    }
+
+    private static void sendHelp(CommandSourceStack source, String cmd, String desc) {
+        source.sendSuccess(() -> Component.literal("  " + cmd)
+                .withStyle(ChatFormatting.YELLOW)
+                .append(Component.literal(" — " + desc)
+                        .withStyle(ChatFormatting.GRAY)), false);
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -342,9 +403,10 @@ public final class SomniumCommand {
     private static com.mojang.brigadier.builder.LiteralArgumentBuilder<CommandSourceStack>
     buildPlayerCommands() {
         return Commands.literal("player")
-                .then(Commands.literal("list")
-                        .then(Commands.argument("player", EntityArgument.player())
-                                .executes(SomniumCommand::playerList)))
+                // /somnium player — defaults to executing player
+                .executes(ctx -> playerFullStats(ctx, ctx.getSource().getPlayerOrException()))
+                .then(Commands.argument("player", EntityArgument.player())
+                        .executes(ctx -> playerFullStats(ctx, EntityArgument.getPlayer(ctx, "player"))))
                 .then(Commands.literal("state")
                         .then(Commands.argument("player", EntityArgument.player())
                                 .then(Commands.literal("reset")
@@ -358,122 +420,108 @@ public final class SomniumCommand {
     }
 
     /**
-     * Displays all powers, abilities, and progression state for a player.
+     * Displays comprehensive Somnium stats for a player.
      */
-    private static int playerList(CommandContext<CommandSourceStack> context)
-            throws CommandSyntaxException {
-        ServerPlayer player = EntityArgument.getPlayer(context, "player");
+    private static int playerFullStats(CommandContext<CommandSourceStack> context,
+                                       ServerPlayer player) {
         SomniumPlayerData data = SomniumCapability.get(player);
-
         if (data == null) {
-            context.getSource().sendFailure(
-                    Component.literal("Could not access player data."));
+            context.getSource().sendFailure(Component.literal("Could not access player data."));
             return 0;
         }
 
         CommandSourceStack source = context.getSource();
 
         // Header
-        source.sendSuccess(() -> Component.literal("=== Somnium Data for ")
+        source.sendSuccess(() -> Component.literal("═══ Somnium — ")
                 .append(player.getDisplayName())
-                .append(" ===")
+                .append(" ═══")
                 .withStyle(ChatFormatting.GOLD), false);
 
-        // Powers
+        // ── Composition ──
+        net.eclipce.somnium.core.composition.CompositionData comp = data.getComposition();
+        source.sendSuccess(() -> Component.literal("  Composition: ")
+                .append(Component.literal(String.format("%.1f", comp.getValue()))
+                        .withStyle(ChatFormatting.GREEN))
+                .append(Component.literal(String.format(" (multiplier: %.3f)", comp.getGrowthMultiplier()))
+                        .withStyle(ChatFormatting.DARK_GRAY)), false);
+
+        // ── Stamina ──
+        net.eclipce.somnium.core.meter.StaminaData stamina = data.getStaminaData();
+        ChatFormatting staminaColor = stamina.getValue() < 0 ? ChatFormatting.RED : ChatFormatting.GREEN;
+        source.sendSuccess(() -> Component.literal("  Stamina: ")
+                .append(Component.literal(String.format("%.1f / %.0f",
+                                stamina.getValue(), stamina.getMaxValue()))
+                        .withStyle(staminaColor)), false);
+
+        // ── Overuse ──
+        if (stamina.getOveruseStage() > 0 || stamina.isGraceUsed()) {
+            source.sendSuccess(() -> Component.literal("  Overuse: ")
+                    .append(Component.literal("Stage " + stamina.getOveruseStage())
+                            .withStyle(ChatFormatting.RED))
+                    .append(stamina.isInOveruse()
+                            ? Component.literal(" [ACTIVE]").withStyle(ChatFormatting.DARK_RED)
+                            : Component.literal(" [recovering]").withStyle(ChatFormatting.YELLOW)), false);
+            if (stamina.getWindowTimer() > 0) {
+                int sec = stamina.getWindowTimer() / 20;
+                source.sendSuccess(() -> Component.literal("    Window: ")
+                        .append(Component.literal(sec + "s")
+                                .withStyle(ChatFormatting.GOLD)), false);
+            }
+            if (stamina.getEffectTimer() > 0) {
+                int sec = stamina.getEffectTimer() / 20;
+                source.sendSuccess(() -> Component.literal("    Effect: ")
+                        .append(Component.literal(sec + "s remaining")
+                                .withStyle(ChatFormatting.RED)), false);
+            }
+        } else {
+            source.sendSuccess(() -> Component.literal("  Overuse: ")
+                    .append(Component.literal("None")
+                            .withStyle(ChatFormatting.GREEN)), false);
+        }
+
+        // ── Powers & Levels ──
         var powerKeys = data.getGrantedPowerKeys();
         if (powerKeys.isEmpty()) {
-            source.sendSuccess(() -> Component.literal("  No powers granted.")
-                    .withStyle(ChatFormatting.GRAY), false);
+            source.sendSuccess(() -> Component.literal("  Powers: ")
+                    .append(Component.literal("None")
+                            .withStyle(ChatFormatting.GRAY)), false);
         } else {
+            source.sendSuccess(() -> Component.literal("  Powers:")
+                    .withStyle(ChatFormatting.YELLOW), false);
             for (ResourceLocation powerKey : powerKeys) {
                 Power power = SomniumRegistries.getPowerValue(powerKey);
-                String powerName = power != null
-                        ? power.getDisplayName().getString()
-                        : powerKey.toString();
+                String name = power != null ? power.getDisplayName().getString() : powerKey.toString();
 
-                source.sendSuccess(() -> Component.literal("  Power: ")
-                        .append(Component.literal(powerName)
-                                .withStyle(ChatFormatting.GOLD))
-                        .append(Component.literal(" [" + powerKey + "]")
-                                .withStyle(ChatFormatting.DARK_GRAY)), false);
-
-                if (power == null) continue;
-
-                // Show abilities in this power
-                for (Power.PowerAbilityEntry entry : power.getEntries()) {
-                    AbilityType abilityType = entry.getAbilityType();
-                    if (abilityType == null) continue;
-
-                    ResourceLocation abilityKey = SomniumRegistries.getAbilityKey(abilityType);
-                    String abilityName = abilityType.getDisplayName().getString();
-                    boolean unlocked = data.isAbilityUnlocked(abilityType);
-
-                    if (unlocked) {
-                        // Show unlocked ability
-                        Component status = Component.literal("    ✓ ")
-                                .withStyle(ChatFormatting.GREEN)
-                                .append(Component.literal(abilityName)
-                                        .withStyle(ChatFormatting.WHITE))
-                                .append(Component.literal(
-                                                " [" + abilityType.getActivationType().name() + "]")
-                                        .withStyle(ChatFormatting.DARK_GRAY));
-
-                        // Show bar slot info
-                        int barSlot = data.findBarSlot(abilityType);
-                        if (barSlot >= 0) {
-                            status = status.copy()
-                                    .append(Component.literal(" (Bar " + (barSlot + 1) + ")")
-                                            .withStyle(ChatFormatting.YELLOW));
-                        }
-
-                        final Component finalStatus = status;
-                        source.sendSuccess(() -> finalStatus, false);
-                    } else {
-                        // Show locked ability with progress
-                        Component status = Component.literal("    ✗ ")
-                                .withStyle(ChatFormatting.RED)
-                                .append(Component.literal(abilityName)
-                                        .withStyle(ChatFormatting.GRAY));
-
-                        // Show progress if tracked
-                        UnlockCondition condition = entry.getUnlockCondition();
-                        if (condition != null && abilityKey != null) {
-                            String progressKey = ProgressionHandler.makeProgressKey(
-                                    powerKey, abilityType);
-                            if (progressKey != null) {
-                                CompoundTag progress = data.getUnlockProgress(progressKey);
-                                if (progress != null) {
-                                    Component progressText = condition.getProgressText(progress);
-                                    status = status.copy()
-                                            .append(Component.literal(" — ")
-                                                    .withStyle(ChatFormatting.DARK_GRAY))
-                                            .append(progressText.copy()
-                                                    .withStyle(ChatFormatting.GRAY));
-                                }
-                            }
-                        }
-
-                        final Component finalStatus = status;
-                        source.sendSuccess(() -> finalStatus, false);
-                    }
+                if (power != null && power.isPowerLevelEnabled()) {
+                    int level = data.getPowerProgress().getLevel(powerKey);
+                    double xp = data.getPowerProgress().getXP(powerKey);
+                    double nextXP = data.getPowerProgress().getXPForNextLevel(powerKey);
+                    source.sendSuccess(() -> Component.literal("    " + name)
+                            .withStyle(ChatFormatting.AQUA)
+                            .append(Component.literal(String.format(" — Lv. %d (%.0f/%.0f XP)",
+                                            level, xp, nextXP))
+                                    .withStyle(ChatFormatting.GREEN)), false);
+                } else {
+                    source.sendSuccess(() -> Component.literal("    " + name)
+                            .withStyle(ChatFormatting.AQUA), false);
                 }
             }
         }
 
-        // Active transformation
-        ResourceLocation activeTrans = data.getActiveTransformation();
-        if (activeTrans != null) {
-            source.sendSuccess(() -> Component.literal("  Active Transformation: ")
-                    .append(Component.literal(activeTrans.toString())
-                            .withStyle(ChatFormatting.LIGHT_PURPLE)), false);
+        // ── Tags ──
+        Set<ResourceLocation> tags = data.getTags();
+        if (!tags.isEmpty()) {
+            StringBuilder tagStr = new StringBuilder();
+            for (ResourceLocation tag : tags) {
+                if (tagStr.length() > 0) tagStr.append(", ");
+                tagStr.append(tag.toString());
+            }
+            String finalTagStr = tagStr.toString();
+            source.sendSuccess(() -> Component.literal("  Tags: ")
+                    .append(Component.literal(finalTagStr)
+                            .withStyle(ChatFormatting.GRAY)), false);
         }
-
-        // Summary counts
-        int totalUnlocked = data.getUnlockedAbilityKeys().size();
-        int totalProgress = data.getAllUnlockProgress().size();
-        source.sendSuccess(() -> Component.literal("  Unlocked: " + totalUnlocked
-                        + " abilities, " + totalProgress + " in progress")
-                .withStyle(ChatFormatting.GRAY), false);
 
         return 1;
     }
@@ -945,8 +993,9 @@ public final class SomniumCommand {
     buildCompositionCommands() {
         return Commands.literal("composition")
                 .then(Commands.literal("get")
+                        .executes(ctx -> compositionGet(ctx, ctx.getSource().getPlayerOrException()))
                         .then(Commands.argument("player", EntityArgument.player())
-                                .executes(SomniumCommand::compositionGet)))
+                                .executes(ctx -> compositionGet(ctx, EntityArgument.getPlayer(ctx, "player")))))
                 .then(Commands.literal("set")
                         .then(Commands.argument("player", EntityArgument.player())
                                 .then(Commands.argument("value", DoubleArgumentType.doubleArg(0))
@@ -960,9 +1009,8 @@ public final class SomniumCommand {
                                 .executes(SomniumCommand::compositionReset)));
     }
 
-    private static int compositionGet(CommandContext<CommandSourceStack> context)
-            throws CommandSyntaxException {
-        ServerPlayer player = EntityArgument.getPlayer(context, "player");
+    private static int compositionGet(CommandContext<CommandSourceStack> context,
+                                      ServerPlayer player) {
         SomniumPlayerData data = SomniumCapability.get(player);
         if (data == null) { context.getSource().sendFailure(Component.literal("No data.")); return 0; }
 

@@ -8,9 +8,6 @@ import net.eclipce.somnium.core.data.SomniumPlayerData;
 import net.eclipce.somnium.core.effects.SomniumEffects;
 import net.eclipce.somnium.core.registry.SomniumRegistries;
 import net.eclipce.somnium.network.SomniumNetwork;
-import net.eclipce.somnium.test.CuriosTestSetup;
-import net.eclipce.somnium.test.GeckoLibTestSetup;
-import net.eclipce.somnium.test.TestContent;
 import net.minecraft.client.Minecraft;
 import net.minecraftforge.api.distmarker.Dist;
 import net.minecraftforge.common.MinecraftForge;
@@ -71,16 +68,6 @@ public class Somnium {
         MinecraftForge.EVENT_BUS.addListener(
                 (net.minecraftforge.event.RegisterCommandsEvent event) ->
                         SomniumCommand.register(event.getDispatcher()));
-
-        TestContent.init(modEventBus);
-
-        // Integration test content — remove before release
-        if (net.minecraftforge.fml.ModList.get().isLoaded("curios")) {
-            CuriosTestSetup.init(modEventBus);
-        }
-        if (net.minecraftforge.fml.ModList.get().isLoaded("geckolib")) {
-            GeckoLibTestSetup.init(modEventBus);
-        }
 
         modEventBus.addListener(this::onClientSetup);
 

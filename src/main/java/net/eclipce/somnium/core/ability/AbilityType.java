@@ -69,6 +69,8 @@ public class AbilityType {
     private final boolean compositionOptOut;
     private final boolean enabledOnGrant;
     private final boolean forced;
+    private final int powerXP;
+    private final int levelRequirement;
 
     /**
      * Creates an AbilityType with the given properties.
@@ -91,6 +93,8 @@ public class AbilityType {
         this.compositionOptOut = properties.compositionOptOut;
         this.enabledOnGrant = properties.enabledOnGrant;
         this.forced = properties.forced;
+        this.powerXP = properties.powerXP;
+        this.levelRequirement = properties.levelRequirement;
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -435,6 +439,16 @@ public class AbilityType {
         return forced;
     }
 
+    /** @return XP granted to the parent power when this ability is activated */
+    public int getPowerXP() {
+        return powerXP;
+    }
+
+    /** @return the power level required to unlock this ability (0 = no requirement) */
+    public int getLevelRequirement() {
+        return levelRequirement;
+    }
+
     /**
      * Checks if the player can afford all meter costs for this ability.
      *
@@ -512,6 +526,8 @@ public class AbilityType {
         boolean compositionOptOut = false;
         boolean enabledOnGrant = false;
         boolean forced = false;
+        int powerXP = 1;
+        int levelRequirement = 0; // 0 = no level requirement
 
         /**
          * Sets the activation type. Defaults to {@link ActivationType#INSTANT}.
@@ -688,6 +704,25 @@ public class AbilityType {
         public Properties forced() {
             this.forced = true;
             this.enabledOnGrant = true; // forced implies enabled on grant
+            return this;
+        }
+
+        /**
+         * Sets the power XP granted when this ability is activated.
+         * Default is 1. Set to 0 to grant no power XP.
+         */
+        public Properties powerXP(int amount) {
+            this.powerXP = amount;
+            return this;
+        }
+
+        /**
+         * Sets the power level required to unlock this ability.
+         * Only effective when the parent power has {@code powerLevelEnabled()}.
+         * Default is 0 (no requirement).
+         */
+        public Properties levelRequirement(int level) {
+            this.levelRequirement = level;
             return this;
         }
     }

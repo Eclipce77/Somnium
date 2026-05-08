@@ -1,4 +1,4 @@
-package net.eclipce.somnium.core.unlock;
+package net.eclipce.somnium.core.progression;
 
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.network.chat.Component;
@@ -20,13 +20,13 @@ import net.minecraft.network.chat.Component;
  *
  * <h3>Built-in conditions</h3>
  * <ul>
- *     <li>{@link net.eclipce.somnium.core.unlock.conditions.AlwaysUnlocked} —
+ *     <li>{@link net.eclipce.somnium.core.progression.conditions.AlwaysUnlocked} —
  *         immediately met (no progress tracking)</li>
- *     <li>{@link net.eclipce.somnium.core.unlock.conditions.AbilityUsageCondition} —
+ *     <li>{@link net.eclipce.somnium.core.progression.conditions.AbilityUsageCondition} —
  *         "use ability X, N times"</li>
- *     <li>{@link net.eclipce.somnium.core.unlock.conditions.KillCondition} —
+ *     <li>{@link net.eclipce.somnium.core.progression.conditions.KillCondition} —
  *         "kill N entities"</li>
- *     <li>{@link net.eclipce.somnium.core.unlock.conditions.CompositeCondition} —
+ *     <li>{@link net.eclipce.somnium.core.progression.conditions.CompositeCondition} —
  *         AND/OR combinations of other conditions</li>
  * </ul>
  *

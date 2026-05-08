@@ -1,8 +1,8 @@
-package net.eclipce.somnium.core.unlock.conditions;
+package net.eclipce.somnium.core.progression.conditions;
 
 import net.eclipce.somnium.core.ability.AbilityType;
 import net.eclipce.somnium.core.registry.SomniumRegistries;
-import net.eclipce.somnium.core.unlock.UnlockCondition;
+import net.eclipce.somnium.core.progression.UnlockCondition;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceLocation;
@@ -28,7 +28,7 @@ import java.util.function.Supplier;
  *     .build();
  * }</pre>
  *
- * @see net.eclipce.somnium.core.unlock.ProgressionHandler
+ * @see net.eclipce.somnium.core.progression.ProgressionHandler
  */
 public class AbilityUsageCondition extends UnlockCondition {
 

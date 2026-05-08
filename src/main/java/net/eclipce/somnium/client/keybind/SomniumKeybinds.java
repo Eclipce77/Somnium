@@ -80,12 +80,12 @@ public final class SomniumKeybinds {
     /** Keybind to open the ability inventory screen. Default: P */
     public static final KeyMapping ABILITY_INVENTORY = new KeyMapping(
             "key." + Somnium.MOD_ID + ".ability_inventory",
-            InputConstants.Type.KEYSYM, GLFW.GLFW_KEY_P, CATEGORY);
+            InputConstants.Type.KEYSYM, GLFW.GLFW_KEY_I, CATEGORY);
 
     /** Keybind for transformation quick activation (WIP). Default: T */
     public static final KeyMapping TRANSFORMATION_QUICKBIND = new KeyMapping(
             "key." + Somnium.MOD_ID + ".transformation",
-            InputConstants.Type.KEYSYM, GLFW.GLFW_KEY_T, CATEGORY);
+            InputConstants.Type.KEYSYM, GLFW.GLFW_KEY_Y, CATEGORY);
 
     /** Keybind for Utility category bar toggle (test content). Default: ~ (grave accent) */
     public static final KeyMapping UTILITY_BAR = new KeyMapping(

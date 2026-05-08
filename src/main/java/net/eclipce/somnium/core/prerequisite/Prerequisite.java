@@ -8,7 +8,7 @@ import net.minecraft.network.chat.Component;
  * When the prerequisite is not met, the ability is completely hidden
  * from the ability inventory — not grayed out, not locked, just invisible.
  *
- * <p>Unlike {@link net.eclipce.somnium.core.unlock.UnlockCondition} which
+ * <p>Unlike {@link net.eclipce.somnium.core.progression.UnlockCondition} which
  * tracks progress toward unlocking, prerequisites are binary: either the
  * player meets the requirement or they don't. There is no progress bar.</p>
  *

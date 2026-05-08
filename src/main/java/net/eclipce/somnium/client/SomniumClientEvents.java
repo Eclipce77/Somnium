@@ -83,22 +83,6 @@ public class SomniumClientEvents {
             event.registerAboveAll("meter_bar", new MeterOverlay());
             Somnium.LOGGER.debug("Somnium ability bar overlay registered");
         }
-
-        /**
-         * Adds the transformation skin overlay layer to all player renderers.
-         * This fires for both "default" and "slim" skin types.
-         */
-        @SubscribeEvent
-        public static void onAddLayers(net.minecraftforge.client.event.EntityRenderersEvent.AddLayers event) {
-            for (String skin : event.getSkins()) {
-                net.minecraft.client.renderer.entity.EntityRenderer<? extends net.minecraft.world.entity.player.Player> renderer =
-                        event.getSkin(skin);
-                if (renderer instanceof net.minecraft.client.renderer.entity.player.PlayerRenderer playerRenderer) {
-                    playerRenderer.addLayer(new TransformationSkinLayer(playerRenderer));
-                }
-            }
-            Somnium.LOGGER.debug("Somnium transformation skin layer registered");
-        }
     }
 
     // ═══════════════════════════════════════════════════════════════════

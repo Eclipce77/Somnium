@@ -123,82 +123,6 @@ public class MeterOverlay implements IGuiOverlay {
         // Render stamina
         net.eclipce.somnium.core.meter.StaminaData stamina = data.getStaminaData();
         renderStamina(graphics, staminaX, staminaY, stamina);
-
-        // Custom meters stack after stamina
-        int nextMeterX = staminaX + TEX_WIDTH + METER_GAP;
-
-        // Render custom meters
-        for (Map.Entry<ResourceLocation, MeterInstance> entry : data.getAllMeters().entrySet()) {
-            MeterDefinition def = MeterDefinition.get(entry.getKey());
-            if (def == null) continue;
-
-            if (!isMeterVisible(def, data)) continue;
-
-            MeterInstance meter = entry.getValue();
-
-            int meterX, meterY;
-            int[] fixedPos = def.getScreenPosition();
-            if (fixedPos != null) {
-                meterX = fixedPos[0];
-                meterY = fixedPos[1];
-            } else {
-                meterX = nextMeterX;
-                meterY = staminaY;
-                nextMeterX += TEX_WIDTH + METER_GAP;
-            }
-
-            ResourceLocation frame = def.getFrameTexture() != null
-                    ? def.getFrameTexture() : DEFAULT_FRAME;
-            ResourceLocation fill = def.getFillTexture() != null
-                    ? def.getFillTexture() : DEFAULT_FILL;
-
-            renderMeter(graphics, meterX, meterY, meter, def, frame, fill,
-                    def.getColor());
-        }
-    }
-
-    /**
-     * Renders a single meter bar (frame + fill overlay).
-     * Fill direction: bottom-to-top (full at bottom, empties from top).
-     *
-     * @param color RGB color for the fill texture, or -1 for no tint (white)
-     */
-    private void renderMeter(GuiGraphics graphics, int x, int y,
-                             MeterInstance meter,
-                             @Nullable MeterDefinition def,
-                             ResourceLocation frameTexture,
-                             ResourceLocation fillTexture,
-                             int color) {
-        // Render frame first (background)
-        RenderSystem.enableBlend();
-        graphics.blit(frameTexture, x, y,
-                0, 0, TEX_WIDTH, TEX_HEIGHT,
-                TEX_WIDTH, TEX_HEIGHT);
-        RenderSystem.disableBlend();
-
-        // Render fill on top, clipped by fill fraction (bottom-to-top)
-        float fraction = meter.getFraction();
-        int fillPixels = Math.round(TEX_HEIGHT * fraction);
-        if (fillPixels > 0) {
-            RenderSystem.enableBlend();
-            if (color >= 0) {
-                float r = ((color >> 16) & 0xFF) / 255f;
-                float g = ((color >> 8) & 0xFF) / 255f;
-                float b = (color & 0xFF) / 255f;
-                RenderSystem.setShaderColor(r, g, b, 1.0f);
-            }
-
-            // Fill anchored at bottom, growing upward
-            int fillStartY = y + TEX_HEIGHT - fillPixels;
-            int texV = TEX_HEIGHT - fillPixels;
-            graphics.blit(fillTexture, x, fillStartY,
-                    0, texV,
-                    TEX_WIDTH, fillPixels,
-                    TEX_WIDTH, TEX_HEIGHT);
-
-            RenderSystem.setShaderColor(1f, 1f, 1f, 1f);
-            RenderSystem.disableBlend();
-        }
     }
 
     /** Ticks per minute — used to calculate overuse timer fraction. */
@@ -278,23 +202,5 @@ public class MeterOverlay implements IGuiOverlay {
                 RenderSystem.disableBlend();
             }
         }
-    }
-
-    /**
-     * Checks if a custom meter should be visible based on its visibility mode.
-     */
-    private boolean isMeterVisible(MeterDefinition def, SomniumPlayerData data) {
-        return switch (def.getVisibilityMode()) {
-            case ALWAYS -> true;
-            case POWER_ACTIVE -> {
-                ResourceLocation key = def.getVisibilityKey();
-                yield key != null && data.getGrantedPowerKeys().contains(key);
-            }
-            case TRANSFORMATION_ACTIVE -> data.hasActiveTransformation();
-            case TAG_PRESENT -> {
-                ResourceLocation key = def.getVisibilityKey();
-                yield key != null && data.hasTag(key);
-            }
-        };
     }
 }

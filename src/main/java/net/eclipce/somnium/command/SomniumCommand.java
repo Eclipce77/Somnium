@@ -15,8 +15,8 @@ import net.eclipce.somnium.core.meter.MeterInstance;
 import net.eclipce.somnium.core.power.Power;
 import net.eclipce.somnium.core.registry.SomniumRegistries;
 import net.eclipce.somnium.core.tag.TagHandler;
-import net.eclipce.somnium.core.unlock.ProgressionHandler;
-import net.eclipce.somnium.core.unlock.UnlockCondition;
+import net.eclipce.somnium.core.progression.ProgressionHandler;
+import net.eclipce.somnium.core.progression.UnlockCondition;
 import net.eclipce.somnium.network.SomniumNetwork;
 import net.minecraft.ChatFormatting;
 import net.minecraft.commands.CommandSourceStack;
@@ -120,6 +120,7 @@ public final class SomniumCommand {
                         .then(buildTagCommands())
                         .then(buildMeterCommands())
                         .then(buildCompositionCommands())
+                        .then(buildPowerLevelCommands())
         );
     }
 
@@ -1037,6 +1038,94 @@ public final class SomniumCommand {
         SomniumNetwork.syncToClient(player);
         context.getSource().sendSuccess(() -> Component.literal("Reset composition for ")
                 .append(player.getDisplayName()), true);
+        return 1;
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
+    //  Power level commands
+    // ═══════════════════════════════════════════════════════════════════
+
+    private static com.mojang.brigadier.builder.LiteralArgumentBuilder<CommandSourceStack>
+    buildPowerLevelCommands() {
+        return Commands.literal("powerlevel")
+                .then(Commands.literal("get")
+                        .then(Commands.argument("player", EntityArgument.player())
+                                .then(Commands.argument("power", ResourceLocationArgument.id())
+                                        .executes(SomniumCommand::powerLevelGet))))
+                .then(Commands.literal("setlevel")
+                        .then(Commands.argument("player", EntityArgument.player())
+                                .then(Commands.argument("power", ResourceLocationArgument.id())
+                                        .then(Commands.argument("level", com.mojang.brigadier.arguments.IntegerArgumentType.integer(0))
+                                                .executes(SomniumCommand::powerLevelSetLevel)))))
+                .then(Commands.literal("addxp")
+                        .then(Commands.argument("player", EntityArgument.player())
+                                .then(Commands.argument("power", ResourceLocationArgument.id())
+                                        .then(Commands.argument("amount", DoubleArgumentType.doubleArg(0))
+                                                .executes(SomniumCommand::powerLevelAddXP)))));
+    }
+
+    private static int powerLevelGet(CommandContext<CommandSourceStack> context)
+            throws CommandSyntaxException {
+        ServerPlayer player = EntityArgument.getPlayer(context, "player");
+        ResourceLocation powerKey = ResourceLocationArgument.getId(context, "power");
+        SomniumPlayerData data = SomniumCapability.get(player);
+        if (data == null) { context.getSource().sendFailure(Component.literal("No data.")); return 0; }
+
+        net.eclipce.somnium.core.progression.PowerProgress pp = data.getPowerProgress();
+        int level = pp.getLevel(powerKey);
+        double xp = pp.getXP(powerKey);
+        double nextXP = pp.getXPForNextLevel(powerKey);
+        double progress = pp.getLevelProgress(powerKey) * 100;
+
+        context.getSource().sendSuccess(() -> Component.literal("Power Level for ")
+                .append(Component.literal(powerKey.toString()).withStyle(ChatFormatting.AQUA))
+                .append(": Level ").append(Component.literal(String.valueOf(level)).withStyle(ChatFormatting.GREEN))
+                .append(" (").append(Component.literal(String.format("%.0f/%.0f XP, %.0f%%",
+                        xp, nextXP, progress)).withStyle(ChatFormatting.YELLOW))
+                .append(")"), false);
+        return 1;
+    }
+
+    private static int powerLevelSetLevel(CommandContext<CommandSourceStack> context)
+            throws CommandSyntaxException {
+        ServerPlayer player = EntityArgument.getPlayer(context, "player");
+        ResourceLocation powerKey = ResourceLocationArgument.getId(context, "power");
+        int level = com.mojang.brigadier.arguments.IntegerArgumentType.getInteger(context, "level");
+        SomniumPlayerData data = SomniumCapability.get(player);
+        if (data == null) { context.getSource().sendFailure(Component.literal("No data.")); return 0; }
+
+        data.getPowerProgress().setLevel(powerKey, level);
+        SomniumNetwork.syncToClient(player);
+        context.getSource().sendSuccess(() -> Component.literal("Set power level to ")
+                .append(Component.literal(String.valueOf(level)).withStyle(ChatFormatting.GREEN))
+                .append(" for ").append(player.getDisplayName()), true);
+        return 1;
+    }
+
+    private static int powerLevelAddXP(CommandContext<CommandSourceStack> context)
+            throws CommandSyntaxException {
+        ServerPlayer player = EntityArgument.getPlayer(context, "player");
+        ResourceLocation powerKey = ResourceLocationArgument.getId(context, "power");
+        double amount = DoubleArgumentType.getDouble(context, "amount");
+        SomniumPlayerData data = SomniumCapability.get(player);
+        if (data == null) { context.getSource().sendFailure(Component.literal("No data.")); return 0; }
+
+        int oldLevel = data.getPowerProgress().getLevel(powerKey);
+        data.getPowerProgress().addXP(powerKey, amount);
+        int newLevel = data.getPowerProgress().getLevel(powerKey);
+        SomniumNetwork.syncToClient(player);
+
+        context.getSource().sendSuccess(() -> Component.literal("Added ")
+                .append(Component.literal(String.format("%.1f", amount)).withStyle(ChatFormatting.GREEN))
+                .append(" XP to power ").append(Component.literal(powerKey.toString()).withStyle(ChatFormatting.AQUA))
+                .append(" (now level ").append(Component.literal(String.valueOf(newLevel)).withStyle(ChatFormatting.YELLOW))
+                .append(")"), true);
+
+        if (newLevel > oldLevel) {
+            net.minecraftforge.common.MinecraftForge.EVENT_BUS.post(
+                    new net.eclipce.somnium.event.SomniumPowerLevelEvent(
+                            player, powerKey, oldLevel, newLevel));
+        }
         return 1;
     }
 }

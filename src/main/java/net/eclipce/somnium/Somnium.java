@@ -3,6 +3,7 @@ package net.eclipce.somnium;
 import com.mojang.logging.LogUtils;
 import net.eclipce.somnium.client.config.SomniumClientConfig;
 import net.eclipce.somnium.command.SomniumCommand;
+import net.eclipce.somnium.config.SomniumCommonConfig;
 import net.eclipce.somnium.core.data.SomniumPlayerData;
 import net.eclipce.somnium.core.effects.SomniumEffects;
 import net.eclipce.somnium.core.registry.SomniumRegistries;
@@ -55,6 +56,11 @@ public class Somnium {
 
         // Register gamerules
         SomniumGameRules.init();
+
+        // Register config
+        ModLoadingContext.get().registerConfig(
+                net.minecraftforge.fml.config.ModConfig.Type.COMMON, SomniumCommonConfig.SPEC, "somnium-common.toml"
+        );
 
         // Layer 6: Register client config for ability bar position settings.
         // Keybind and overlay registration is handled by SomniumClientEvents

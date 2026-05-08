@@ -3,8 +3,8 @@ package net.eclipce.somnium.core.power;
 import net.eclipce.somnium.core.ability.AbilityType;
 import net.eclipce.somnium.core.ability.ActivationType;
 import net.eclipce.somnium.core.prerequisite.Prerequisite;
-import net.eclipce.somnium.core.unlock.UnlockCondition;
-import net.eclipce.somnium.core.unlock.conditions.AlwaysUnlocked;
+import net.eclipce.somnium.core.progression.UnlockCondition;
+import net.eclipce.somnium.core.progression.conditions.AlwaysUnlocked;
 import net.minecraft.network.chat.Component;
 import net.minecraft.resources.ResourceLocation;
 
@@ -57,6 +57,7 @@ public class Power {
     private final ResourceLocation icon;
     private final boolean persistOnDeath;
     private final boolean progressionEnabled;
+    private final boolean powerLevelEnabled;
     private final List<PowerAbilityEntry> entries;
     @Nullable
     private final ResourceLocation autoGrantTag;
@@ -72,6 +73,7 @@ public class Power {
         this.icon = builder.icon;
         this.persistOnDeath = builder.persistOnDeath;
         this.progressionEnabled = builder.progressionEnabled;
+        this.powerLevelEnabled = builder.powerLevelEnabled;
         this.entries = Collections.unmodifiableList(new ArrayList<>(builder.entries));
         this.autoGrantTag = builder.autoGrantTag;
         this.requiredTag = builder.requiredTag;
@@ -112,6 +114,11 @@ public class Power {
      */
     public boolean isProgressionEnabled() {
         return progressionEnabled;
+    }
+
+    /** @return true if this power uses the power leveling system */
+    public boolean isPowerLevelEnabled() {
+        return powerLevelEnabled;
     }
 
     /**
@@ -208,6 +215,7 @@ public class Power {
         private ResourceLocation icon = null;
         private boolean persistOnDeath = true;
         private boolean progressionEnabled = true;
+        private boolean powerLevelEnabled = false;
         private final List<PowerAbilityEntry> entries = new ArrayList<>();
         private ResourceLocation autoGrantTag = null;
         private ResourceLocation requiredTag = null;
@@ -240,6 +248,17 @@ public class Power {
          */
         public Builder progressionEnabled(boolean enabled) {
             this.progressionEnabled = enabled;
+            return this;
+        }
+
+        /**
+         * Enables the power leveling system for this power.
+         * When enabled, ability usage grants power XP, and abilities
+         * can have level requirements via {@code levelRequirement()}.
+         * The power level is displayed in the ability inventory GUI.
+         */
+        public Builder powerLevelEnabled() {
+            this.powerLevelEnabled = true;
             return this;
         }
 

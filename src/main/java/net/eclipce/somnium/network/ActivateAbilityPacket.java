@@ -7,7 +7,7 @@ import net.eclipce.somnium.core.ability.ActivationType;
 import net.eclipce.somnium.core.data.SomniumCapability;
 import net.eclipce.somnium.core.data.SomniumPlayerData;
 import net.eclipce.somnium.core.registry.SomniumRegistries;
-import net.eclipce.somnium.core.unlock.ProgressionHandler;
+import net.eclipce.somnium.core.progression.ProgressionHandler;
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraft.server.level.ServerPlayer;

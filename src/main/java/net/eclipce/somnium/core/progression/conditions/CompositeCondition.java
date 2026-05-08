@@ -1,6 +1,6 @@
-package net.eclipce.somnium.core.unlock.conditions;
+package net.eclipce.somnium.core.progression.conditions;
 
-import net.eclipce.somnium.core.unlock.UnlockCondition;
+import net.eclipce.somnium.core.progression.UnlockCondition;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.network.chat.Component;
 import net.minecraft.network.chat.MutableComponent;

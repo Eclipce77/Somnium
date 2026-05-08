@@ -7,7 +7,7 @@ import net.eclipce.somnium.core.ability.transformation.TransformationInstance;
 import net.eclipce.somnium.core.ability.transformation.TransformationPhase;
 import net.eclipce.somnium.core.power.Power;
 import net.eclipce.somnium.core.registry.SomniumRegistries;
-import net.eclipce.somnium.core.unlock.ProgressionHandler;
+import net.eclipce.somnium.core.progression.ProgressionHandler;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.nbt.ListTag;
 import net.minecraft.nbt.StringTag;
@@ -92,6 +92,8 @@ public class SomniumPlayerData {
     private static final String TAG_STAMINA = "Stamina";
     private static final String TAG_METERS = "Meters";
     private static final String TAG_COMPOSITION = "Composition";
+    private static final String TAG_POWER_PROGRESS = "PowerProgress";
+    private static final int DATA_VERSION = 1;
     private static final String TAG_METER_ID = "MeterId";
 
     // ═══════════════════════════════════════════════════════════════════
@@ -181,6 +183,9 @@ public class SomniumPlayerData {
     private final net.eclipce.somnium.core.composition.CompositionData compositionData =
             new net.eclipce.somnium.core.composition.CompositionData();
 
+    private final net.eclipce.somnium.core.progression.PowerProgress powerProgress =
+            new net.eclipce.somnium.core.progression.PowerProgress();
+
     /**
      * Custom meters — one instance per registered MeterDefinition, created on demand.
      */
@@ -226,6 +231,18 @@ public class SomniumPlayerData {
             }
         } else {
             ProgressionHandler.initializeProgressForPower(this, power);
+        }
+
+        // Auto-enable passives with enabledOnGrant or forced
+        for (AbilityType abilityType : power.getAbilityTypes()) {
+            if (abilityType.getActivationType() == net.eclipce.somnium.core.ability.ActivationType.PASSIVE
+                    && abilityType.isEnabledOnGrant()) {
+                ResourceLocation abilityKey = SomniumRegistries.getAbilityKey(abilityType);
+                AbilityInstance instance = getAbilityInstance(abilityKey);
+                if (instance != null && !instance.isActive()) {
+                    instance.setActive(true);
+                }
+            }
         }
 
         markDirty();
@@ -850,6 +867,11 @@ public class SomniumPlayerData {
         return compositionData;
     }
 
+    /** @return the player's per-power level progress */
+    public net.eclipce.somnium.core.progression.PowerProgress getPowerProgress() {
+        return powerProgress;
+    }
+
     // ═══════════════════════════════════════════════════════════════════
     //  Custom meters
     // ═══════════════════════════════════════════════════════════════════
@@ -1072,6 +1094,7 @@ public class SomniumPlayerData {
         // Stamina
         this.staminaData.copyFrom(source.staminaData);
         this.compositionData.copyFrom(source.compositionData);
+        this.powerProgress.copyFrom(source.powerProgress);
 
         // Custom meters
         this.meters.clear();
@@ -1231,6 +1254,8 @@ public class SomniumPlayerData {
         // Stamina
         root.put(TAG_STAMINA, staminaData.serialize());
         root.put(TAG_COMPOSITION, compositionData.serialize());
+        root.put(TAG_POWER_PROGRESS, powerProgress.serialize());
+        root.putInt("DataVersion", DATA_VERSION);
 
         // Custom meters
         ListTag metersTag = new ListTag();
@@ -1420,6 +1445,14 @@ public class SomniumPlayerData {
                     net.eclipce.somnium.core.composition.CompositionData.deserialize(
                             root.getCompound(TAG_COMPOSITION));
             compositionData.copyFrom(loadedComp);
+        }
+
+        // Power Progress
+        if (root.contains(TAG_POWER_PROGRESS)) {
+            net.eclipce.somnium.core.progression.PowerProgress loadedPP =
+                    net.eclipce.somnium.core.progression.PowerProgress.deserialize(
+                            root.getCompound(TAG_POWER_PROGRESS));
+            powerProgress.copyFrom(loadedPP);
         }
 
         // Custom meters

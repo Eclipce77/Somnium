@@ -1,4 +1,4 @@
-package net.eclipce.somnium.core.unlock;
+package net.eclipce.somnium.core.progression;
 
 import net.eclipce.somnium.Somnium;
 import net.eclipce.somnium.core.ability.AbilityInstance;
@@ -7,9 +7,9 @@ import net.eclipce.somnium.core.data.SomniumCapability;
 import net.eclipce.somnium.core.data.SomniumPlayerData;
 import net.eclipce.somnium.core.power.Power;
 import net.eclipce.somnium.core.registry.SomniumRegistries;
-import net.eclipce.somnium.core.unlock.conditions.AbilityUsageCondition;
-import net.eclipce.somnium.core.unlock.conditions.CompositeCondition;
-import net.eclipce.somnium.core.unlock.conditions.KillCondition;
+import net.eclipce.somnium.core.progression.conditions.AbilityUsageCondition;
+import net.eclipce.somnium.core.progression.conditions.CompositeCondition;
+import net.eclipce.somnium.core.progression.conditions.KillCondition;
 import net.eclipce.somnium.network.SomniumNetwork;
 import net.minecraft.nbt.CompoundTag;
 import net.minecraft.resources.ResourceLocation;
@@ -80,6 +80,25 @@ public class ProgressionHandler {
                         new net.eclipce.somnium.event.SomniumCompositionEvent(
                                 player, oldValue, comp.getValue(), gained,
                                 net.eclipce.somnium.core.composition.CompositionSource.ABILITY_USE));
+            }
+        }
+
+        // Grant power XP (only if parent power has leveling enabled)
+        if (abilityType.getPowerXP() > 0) {
+            ResourceLocation parentPower = findParentPower(data, abilityType);
+            if (parentPower != null) {
+                net.eclipce.somnium.core.power.Power power =
+                        SomniumRegistries.getPowerValue(parentPower);
+                if (power != null && power.isPowerLevelEnabled()) {
+                    int oldLevel = data.getPowerProgress().getLevel(parentPower);
+                    data.getPowerProgress().addXP(parentPower, abilityType.getPowerXP());
+                    int newLevel = data.getPowerProgress().getLevel(parentPower);
+                    if (newLevel > oldLevel) {
+                        net.minecraftforge.common.MinecraftForge.EVENT_BUS.post(
+                                new net.eclipce.somnium.event.SomniumPowerLevelEvent(
+                                        player, parentPower, oldLevel, newLevel));
+                    }
+                }
             }
         }
 
@@ -344,6 +363,20 @@ public class ProgressionHandler {
         ResourceLocation abilityKey = SomniumRegistries.getAbilityKey(abilityType);
         if (abilityKey == null) return null;
         return powerKey.toString() + "|" + abilityKey.toString();
+    }
+
+    /**
+     * Finds which power an ability belongs to for the given player.
+     */
+    @javax.annotation.Nullable
+    private static ResourceLocation findParentPower(SomniumPlayerData data, AbilityType ability) {
+        for (ResourceLocation powerKey : data.getGrantedPowerKeys()) {
+            net.eclipce.somnium.core.power.Power power = SomniumRegistries.getPowerValue(powerKey);
+            if (power != null && power.getAbilityTypes().contains(ability)) {
+                return powerKey;
+            }
+        }
+        return null;
     }
 
     // Private constructor — utility class with static event subscribers

@@ -88,6 +88,13 @@ public class AbilityInventoryScreen extends Screen {
     };
     private static final String[] TYPE_TAB_NAMES = {"Transformations", "Abilities", "Passives"};
 
+    // Power level bar textures (60x9)
+    private static final ResourceLocation POWER_LEVEL_BAR =
+            new ResourceLocation(Somnium.MOD_ID, "textures/gui/inventory/power_level/power_level_bar.png");
+    private static final ResourceLocation POWER_LEVEL_METER =
+            new ResourceLocation(Somnium.MOD_ID, "textures/gui/inventory/power_level/power_level_bar_meter.png");
+    private static final int PL_BAR_W = 60, PL_BAR_H = 9;
+
     // Scroll arrows for left power tabs
     private static final ResourceLocation SCROLL_UP =
             new ResourceLocation(Somnium.MOD_ID, "textures/gui/inventory/assets/server_list_move_up.png");
@@ -329,7 +336,7 @@ public class AbilityInventoryScreen extends Screen {
         if (entry == null || entry.getUnlockCondition() == null) return null;
         ResourceLocation powerKey = SomniumRegistries.getPowerKey(power);
         if (powerKey == null) return null;
-        String progressKey = net.eclipce.somnium.core.unlock.ProgressionHandler
+        String progressKey = net.eclipce.somnium.core.progression.ProgressionHandler
                 .makeProgressKey(powerKey, type);
         if (progressKey == null) return null;
         net.minecraft.nbt.CompoundTag progress = data.getUnlockProgress(progressKey);
@@ -344,7 +351,7 @@ public class AbilityInventoryScreen extends Screen {
         if (entry == null || entry.getUnlockCondition() == null) return 0f;
         ResourceLocation powerKey = SomniumRegistries.getPowerKey(power);
         if (powerKey == null) return 0f;
-        String progressKey = net.eclipce.somnium.core.unlock.ProgressionHandler
+        String progressKey = net.eclipce.somnium.core.progression.ProgressionHandler
                 .makeProgressKey(powerKey, type);
         if (progressKey == null) return 0f;
         net.minecraft.nbt.CompoundTag progress = data.getUnlockProgress(progressKey);
@@ -360,6 +367,7 @@ public class AbilityInventoryScreen extends Screen {
     public void render(GuiGraphics graphics, int mouseX, int mouseY, float partialTick) {
         renderBackground(graphics);
         renderMainBackground(graphics);
+        renderCompositionDisplay(graphics);
         renderSlotsOverlay(graphics);
         renderPowerTabs(graphics, mouseX, mouseY);
         renderTypeTabs(graphics, mouseX, mouseY);
@@ -379,6 +387,73 @@ public class AbilityInventoryScreen extends Screen {
         RenderSystem.enableBlend();
         graphics.blit(getBackgroundTexture(), leftPos, topPos,
                 VIS_X, VIS_Y, VIS_W, VIS_H, TEX_W, TEX_H);
+        RenderSystem.disableBlend();
+    }
+
+    /**
+     * Renders composition value on the right side of the inventory,
+     * and power level on the left side (only for powers with power leveling).
+     */
+    private void renderCompositionDisplay(GuiGraphics graphics) {
+        if (data == null) return;
+
+        // ── Composition (right-aligned) ──
+        // TUNING: Change these two values to reposition the text.
+        // COMP_ANCHOR_TEX_X: the texture X coordinate where the RIGHT edge of the text aligns.
+        // COMP_TEX_Y: the texture Y coordinate for the top of the text.
+        // Right-alignment is preserved regardless of what values you set here.
+        final int COMP_ANCHOR_TEX_X = 298;  // right edge of text aligns here on the texture
+        final int COMP_TEX_Y = 25;          // Y position on the texture (topPos - 12 equivalent)
+
+        net.eclipce.somnium.core.composition.CompositionData comp = data.getComposition();
+        int compInt = comp.getIntValue();
+        String compText = "Comp: " + compInt;
+
+        // Right-aligned: text X = anchor minus text width (shifts left as value grows)
+        int compAnchorX = leftPos + (COMP_ANCHOR_TEX_X - VIS_X);
+        int compX = compAnchorX - font.width(compText);
+        int compY = topPos + (COMP_TEX_Y - VIS_Y);
+
+        // Drop shadow (render dark text offset by 1px, then bright text on top)
+        graphics.drawString(font, compText, compX + 1, compY + 1, 0x3F2A00, false);
+        graphics.drawString(font, compText, compX, compY, 0xFFD700, false);
+
+        // ── Power Level (left side, only for powers with leveling) ──
+        if (selectedPowerTab < 0 || selectedPowerTab >= this.powers.size()) return;
+        net.eclipce.somnium.core.power.Power selectedPower = this.powers.get(selectedPowerTab);
+        if (!selectedPower.isPowerLevelEnabled()) return;
+
+        ResourceLocation powerKey = net.eclipce.somnium.core.registry.SomniumRegistries
+                .getPowerKey(selectedPower);
+        if (powerKey == null) return;
+
+        net.eclipce.somnium.core.progression.PowerProgress pp = data.getPowerProgress();
+        int level = pp.getLevel(powerKey);
+        double progress = pp.getLevelProgress(powerKey);
+
+        String levelText = "Pwr Lv. " + level;
+        int levelX = leftPos + 5;
+        int levelY = topPos - 22;
+
+        // Drop shadow for level text
+        graphics.drawString(font, levelText, levelX + 1, levelY + 1, 0x003300, false);
+        graphics.drawString(font, levelText, levelX, levelY, 0x55FF55, false);
+
+        // XP bar below the level text
+        int barX = levelX;
+        int barY = levelY + font.lineHeight + 1;
+
+        // Bar background
+        RenderSystem.enableBlend();
+        graphics.blit(POWER_LEVEL_BAR, barX, barY, 0, 0,
+                PL_BAR_W, PL_BAR_H, PL_BAR_W, PL_BAR_H);
+
+        // Bar fill (left to right based on progress)
+        int fillPixels = (int) (PL_BAR_W * progress);
+        if (fillPixels > 0) {
+            graphics.blit(POWER_LEVEL_METER, barX, barY, 0, 0,
+                    fillPixels, PL_BAR_H, PL_BAR_W, PL_BAR_H);
+        }
         RenderSystem.disableBlend();
     }
 

@@ -17,6 +17,6 @@
 **Tag System** — A lightweight labeling system for gating abilities behind conditions. Tags can be granted by items, events, curios, or any custom logic.
 
 **Optional Compatibility**
-- [[GeckoLib 4](https://modrinth.com/mod/geckolib)
-- [[Curios API](https://modrinth.com/mod/curios)]
-- [[Pehkui](https://modrinth.com/mod/pehkui)]
+- [GeckoLib 4](https://modrinth.com/mod/geckolib)
+- [Curios API](https://modrinth.com/mod/curios)
+- [Pehkui](https://modrinth.com/mod/pehkui)

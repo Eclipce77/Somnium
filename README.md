@@ -1,4 +1,4 @@
-#A highly customizable Power and Ability API, for those who can dream it possible. 
+# A highly customizable Power and Ability API, for those who can dream it possible. 
 
 ## What Somnium Provides
 

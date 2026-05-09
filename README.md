@@ -16,4 +16,7 @@
 
 **Tag System** — A lightweight labeling system for gating abilities behind conditions. Tags can be granted by items, events, curios, or any custom logic.
 
-**Optional Compatibility** — First-class integration with [[GeckoLib 4](https://modrinth.com/mod/geckolib)](https://modrinth.com/mod/geckolib), [[Curios API](https://modrinth.com/mod/curios)](https://modrinth.com/mod/curios), and [[Pehkui](https://modrinth.com/mod/pehkui)](https://modrinth.com/mod/pehkui). All optional — Somnium works without any of them.
+**Optional Compatibility**
+[[GeckoLib 4](https://modrinth.com/mod/geckolib)](https://modrinth.com/mod/geckolib) 
+[[Curios API](https://modrinth.com/mod/curios)](https://modrinth.com/mod/curios)
+[[Pehkui](https://modrinth.com/mod/pehkui)](https://modrinth.com/mod/pehkui)

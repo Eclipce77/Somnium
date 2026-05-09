@@ -77,20 +77,15 @@ public final class SomniumKeybinds {
             "key." + Somnium.MOD_ID + ".page_toggle",
             InputConstants.Type.KEYSYM, GLFW.GLFW_KEY_LEFT_ALT, CATEGORY);
 
-    /** Keybind to open the ability inventory screen. Default: P */
+    /** Keybind to open the ability inventory screen. Default: I */
     public static final KeyMapping ABILITY_INVENTORY = new KeyMapping(
             "key." + Somnium.MOD_ID + ".ability_inventory",
             InputConstants.Type.KEYSYM, GLFW.GLFW_KEY_I, CATEGORY);
 
-    /** Keybind for transformation quick activation (WIP). Default: T */
+    /** Keybind for transformation quick activation (WIP). Default: Y */
     public static final KeyMapping TRANSFORMATION_QUICKBIND = new KeyMapping(
             "key." + Somnium.MOD_ID + ".transformation",
             InputConstants.Type.KEYSYM, GLFW.GLFW_KEY_Y, CATEGORY);
-
-    /** Keybind for Utility category bar toggle (test content). Default: ~ (grave accent) */
-    public static final KeyMapping UTILITY_BAR = new KeyMapping(
-            "key." + Somnium.MOD_ID + ".utility_bar",
-            InputConstants.Type.KEYSYM, GLFW.GLFW_KEY_GRAVE_ACCENT, CATEGORY);
 
     // ═══════════════════════════════════════════════════════════════════
     //  Utility methods
@@ -106,8 +101,7 @@ public final class SomniumKeybinds {
         return new KeyMapping[]{
                 ABILITY_SLOT_1, ABILITY_SLOT_2, ABILITY_SLOT_3,
                 ABILITY_SLOT_4, ABILITY_SLOT_5, ABILITY_SLOT_6,
-                PAGE_TOGGLE, ABILITY_INVENTORY, TRANSFORMATION_QUICKBIND,
-                UTILITY_BAR
+                PAGE_TOGGLE, ABILITY_INVENTORY, TRANSFORMATION_QUICKBIND
         };
     }
 
@@ -119,9 +113,92 @@ public final class SomniumKeybinds {
      * @param slot the bar slot index (0–5)
      * @return the display string for the bound key
      */
+    /**
+     * Gets an abbreviated display name for the key bound to a slot.
+     * Common keys use standard abbreviations. Returns empty string
+     * for mouse buttons (use {@link #isSlotMouseBound} instead).
+     */
     public static String getSlotKeyName(int slot) {
         if (slot < 0 || slot >= SomniumPlayerData.BAR_SIZE) return "?";
-        return ABILITY_SLOTS[slot].getTranslatedKeyMessage().getString();
+        String raw = ABILITY_SLOTS[slot].getTranslatedKeyMessage().getString();
+        return abbreviateKeyName(raw);
+    }
+
+    /**
+     * Checks if a slot's keybind is a mouse button.
+     */
+    public static boolean isSlotMouseBound(int slot) {
+        if (slot < 0 || slot >= SomniumPlayerData.BAR_SIZE) return false;
+        return ABILITY_SLOTS[slot].getKey().getType() == com.mojang.blaze3d.platform.InputConstants.Type.MOUSE;
+    }
+
+    /**
+     * Gets the mouse button index for a slot (0=left, 1=right, 2=middle, 3=button4, 4=button5).
+     * Returns -1 if not a mouse button.
+     */
+    public static int getSlotMouseButton(int slot) {
+        if (!isSlotMouseBound(slot)) return -1;
+        return ABILITY_SLOTS[slot].getKey().getValue();
+    }
+
+    /**
+     * Abbreviates common key names for compact display on the ability bar.
+     */
+    private static String abbreviateKeyName(String name) {
+        if (name == null || name.isEmpty()) return "?";
+        return switch (name.toLowerCase()) {
+            case "left control" -> "Ctrl";
+            case "right control" -> "RCtrl";
+            case "left shift" -> "Shft";
+            case "right shift" -> "RShft";
+            case "left alt" -> "Alt";
+            case "right alt" -> "RAlt";
+            case "caps lock" -> "Caps";
+            case "tab" -> "Tab";
+            case "space", "spacebar" -> "Space";
+            case "escape" -> "Esc";
+            case "enter", "return" -> "Ent";
+            case "backspace" -> "Bksp";
+            case "delete" -> "Del";
+            case "insert" -> "Ins";
+            case "home" -> "Hm";
+            case "end" -> "End";
+            case "page up" -> "PgU";
+            case "page down" -> "PgD";
+            case "print screen" -> "PrtS";
+            case "scroll lock" -> "ScrL";
+            case "pause" -> "Pse";
+            case "num lock" -> "NmLk";
+            case "numpad 0" -> "Nm0";
+            case "numpad 1" -> "Nm1";
+            case "numpad 2" -> "Nm2";
+            case "numpad 3" -> "Nm3";
+            case "numpad 4" -> "Nm4";
+            case "numpad 5" -> "Nm5";
+            case "numpad 6" -> "Nm6";
+            case "numpad 7" -> "Nm7";
+            case "numpad 8" -> "Nm8";
+            case "numpad 9" -> "Nm9";
+            case "numpad add" -> "Nm+";
+            case "numpad subtract" -> "Nm-";
+            case "numpad multiply" -> "Nm*";
+            case "numpad divide" -> "Nm/";
+            case "numpad decimal" -> "Nm.";
+            case "numpad enter" -> "NmEnt";
+            case "left button", "button 1" -> "M1";
+            case "right button", "button 2" -> "M2";
+            case "middle button", "button 3" -> "M3";
+            case "button 4" -> "M4";
+            case "button 5" -> "M5";
+            default -> {
+                // Single character keys stay as-is (A, B, 1, 2, etc.)
+                // Shorten "Keypad X" style names
+                if (name.length() <= 3) yield name;
+                // Function keys stay as-is (F1, F2, etc.)
+                if (name.matches("F\\d+")) yield name;
+                yield name;
+            }
+        };
     }
 
     // Private constructor — utility class

@@ -92,10 +92,10 @@ public class AbilityBarOverlay implements IGuiOverlay {
     // ═══════════════════════════════════════════════════════════════════
 
     /** Horizontal offset in pixels from the screen edge. */
-    public static final int SCREEN_OFFSET_X = 7;
+    public static final int SCREEN_OFFSET_X = 10;
 
     /** Vertical offset in pixels from the screen edge. */
-    public static final int SCREEN_OFFSET_Y = 5;
+    public static final int SCREEN_OFFSET_Y = 10;
 
     // ═══════════════════════════════════════════════════════════════════
     //  Transformation bar toggle
@@ -374,28 +374,63 @@ public class AbilityBarOverlay implements IGuiOverlay {
         }
     }
 
+    // Mouse button textures (20x20)
+    private static final int MOUSE_TEX_SIZE = 20;
+
     /**
-     * Renders the keybind label for a slot on the appropriate side of the bar.
+     * TUNING: Gap between mouse button textures and the bar edge.
+     * Decrease to move textures closer, increase to move further.
+     */
+    private static final int MOUSE_LABEL_GAP = -5;
+
+    private static final ResourceLocation[] MOUSE_TEXTURES = {
+            new ResourceLocation(Somnium.MOD_ID, "textures/gui/bar/buttons/left_click.png"),    // button 0
+            new ResourceLocation(Somnium.MOD_ID, "textures/gui/bar/buttons/right_click.png"),   // button 1
+            new ResourceLocation(Somnium.MOD_ID, "textures/gui/bar/buttons/middle_click.png"),  // button 2
+            new ResourceLocation(Somnium.MOD_ID, "textures/gui/bar/buttons/button_4.png"),      // button 3
+            new ResourceLocation(Somnium.MOD_ID, "textures/gui/bar/buttons/button_5.png"),      // button 4
+    };
+
+    /**
+     * Renders the keybind label for a slot. Uses custom textures for mouse
+     * buttons and abbreviated text for keyboard keys.
      */
     private void renderKeybindLabel(GuiGraphics graphics, Font font, int slot,
                                     int barX, int iconY, BarPosition position) {
-        String keyName = SomniumKeybinds.getSlotKeyName(slot);
-        int textWidth = font.width(keyName);
 
-        int textX;
-        if (position.isRight()) {
-            // Bar is on the right — labels go to the left of the bar
-            textX = barX - textWidth - KEYBIND_LABEL_GAP;
+        if (SomniumKeybinds.isSlotMouseBound(slot)) {
+            // Mouse button — render texture
+            int mouseBtn = SomniumKeybinds.getSlotMouseButton(slot);
+            if (mouseBtn >= 0 && mouseBtn < MOUSE_TEXTURES.length) {
+                int texX;
+                if (position.isRight()) {
+                    texX = barX - MOUSE_TEX_SIZE - KEYBIND_LABEL_GAP;
+                } else {
+                    texX = barX + TEX_WIDTH + KEYBIND_LABEL_GAP;
+                }
+                int texY = iconY + (ICON_SIZE - MOUSE_TEX_SIZE) / 2;
+
+                RenderSystem.enableBlend();
+                graphics.blit(MOUSE_TEXTURES[mouseBtn], texX, texY,
+                        MOUSE_LABEL_GAP, 0, MOUSE_TEX_SIZE, MOUSE_TEX_SIZE,
+                        MOUSE_TEX_SIZE, MOUSE_TEX_SIZE);
+                RenderSystem.disableBlend();
+            }
         } else {
-            // Bar is on the left — labels go to the right of the bar
-            textX = barX + TEX_WIDTH + KEYBIND_LABEL_GAP;
+            // Keyboard key — render abbreviated text
+            String keyName = SomniumKeybinds.getSlotKeyName(slot);
+            int textWidth = font.width(keyName);
+
+            int textX;
+            if (position.isRight()) {
+                textX = barX - textWidth - KEYBIND_LABEL_GAP;
+            } else {
+                textX = barX + TEX_WIDTH + KEYBIND_LABEL_GAP;
+            }
+
+            int textY = iconY + (ICON_SIZE - font.lineHeight) / 2;
+            graphics.drawString(font, keyName, textX, textY, 0xFFFFFF, true);
         }
-
-        // Center the label vertically within the slot
-        int textY = iconY + (ICON_SIZE - font.lineHeight) / 2;
-
-        // Draw with shadow for readability
-        graphics.drawString(font, keyName, textX, textY, 0xFFFFFF, true);
     }
 
     // ═══════════════════════════════════════════════════════════════════

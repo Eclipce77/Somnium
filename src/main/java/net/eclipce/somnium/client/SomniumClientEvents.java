@@ -218,16 +218,6 @@ public class SomniumClientEvents {
                     AbilityBarOverlay.toggleTransformationBar();
                 }
             }
-
-            // Utility bar keybind (test content — demonstrates addon pattern)
-            if (SomniumKeybinds.UTILITY_BAR.consumeClick()) {
-                if (mc.player.isCrouching()) {
-                    SomniumNetwork.sendToServer(
-                            new QuickCategoryPacket(TestContent.UTILITY.getId()));
-                } else {
-                    AbilityBarOverlay.toggleCategoryBar(TestContent.UTILITY.getId());
-                }
-            }
         }
     }
 }

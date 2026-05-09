@@ -134,6 +134,8 @@ repositories {
     // flatDir {
     //     dir 'libs'
     // }
+    mavenCentral()
+
     maven {
         name = 'GeckoLib'
         url 'https://dl.cloudsmith.io/public/geckolib3/geckolib/maven/'

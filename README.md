@@ -1,5 +1,9 @@
 # A highly customizable Power and Ability API, for those who can dream it possible. 
 
+## Downloads
+[CurseForge](https://www.curseforge.com/minecraft/mc-mods/somnium-api)
+[Modrinth](https://modrinth.com/mod/somnium-api)
+
 ## What Somnium Provides
 
 **Powers & Abilities** — A complete ability system with five activation types (Instant, Toggle, Hold, Charged, Passive), groupable into Powers with configurable unlock conditions. Includes a drag-and-drop ability inventory, a 6-slot HUD bar with paging, and customizable categories.

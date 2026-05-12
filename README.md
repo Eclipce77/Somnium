@@ -1,4 +1,4 @@
-<img width="32" height="32" alt="somnium_icon_better" src="https://github.com/user-attachments/assets/f7c4f857-9405-4f11-a7e5-275f96b324d1" />
+<img width="128" height="128" alt="somnium_icon_better" src="https://github.com/user-attachments/assets/f7c4f857-9405-4f11-a7e5-275f96b324d1" />
 
 # A highly customizable Power and Ability API, for those who can dream it possible. 
 

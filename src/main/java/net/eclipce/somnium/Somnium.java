@@ -69,6 +69,7 @@ public class Somnium {
                 (net.minecraftforge.event.RegisterCommandsEvent event) ->
                         SomniumCommand.register(event.getDispatcher()));
 
+
         modEventBus.addListener(this::onClientSetup);
 
         // Register the commonSetup method for modloading

@@ -5,6 +5,7 @@ import net.eclipce.somnium.compat.geckolib.player.cast.SomniumCastAnimatable;
 import net.eclipce.somnium.compat.geckolib.player.cast.SomniumCastBoneApplicator;
 import net.minecraft.client.model.PlayerModel;
 import net.minecraft.world.entity.player.Player;
+import net.minecraft.world.entity.player.Player;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
@@ -37,8 +38,8 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 public abstract class PlayerModelSetupMixin {
 
     @Inject(method = "setupAnim", at = @At("RETURN"))
-    private <T extends Player> void somnium$onSetupAnimReturn(
-            T entity,
+    private void somnium$onSetupAnimReturn(
+            net.minecraft.world.entity.LivingEntity entity,  // erased type — must match bytecode
             float limbSwing,
             float limbSwingAmount,
             float ageInTicks,
@@ -46,18 +47,16 @@ public abstract class PlayerModelSetupMixin {
             float headPitch,
             CallbackInfo ci) {
 
-        // Skip if GeckoLib not present or no active animation for this player
+        // PlayerModel only receives Player instances in practice
+        if (!(entity instanceof Player player)) return;
+
         if (!GeckoLibCompat.isLoaded()) return;
-        if (!SomniumCastAnimatable.isActive(entity.getUUID())) return;
+        if (!SomniumCastAnimatable.isActive(player.getUUID())) return;
 
-        // Cast is safe: this mixin is on PlayerModel<T extends Player>
         @SuppressWarnings("unchecked")
-        PlayerModel<T> self = (PlayerModel<T>) (Object) this;
+        PlayerModel<Player> self = (PlayerModel<Player>) (Object) this;
 
-        // ageInTicks is used as a rough partial-tick approximation here;
-        // the Minecraft instance's frameTime is preferred when available.
         float partialTick = net.minecraft.client.Minecraft.getInstance().getFrameTime();
-
-        SomniumCastBoneApplicator.apply(entity, self, partialTick);
+        SomniumCastBoneApplicator.apply(player, self, partialTick);
     }
 }

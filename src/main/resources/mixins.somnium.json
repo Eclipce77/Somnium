@@ -1,0 +1,13 @@
+{
+  "required": true,
+  "minVersion": "0.8",
+  "package": "net.eclipce.somnium.compat.geckolib.mixin",
+  "compatibilityLevel": "JAVA_17",
+  "refmap": "mixins.somnium.refmap.json",
+  "client": [
+    "PlayerModelSetupMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

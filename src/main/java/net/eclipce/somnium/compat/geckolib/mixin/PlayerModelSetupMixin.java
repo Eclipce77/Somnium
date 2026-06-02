@@ -1,0 +1,63 @@
+package net.eclipce.somnium.compat.geckolib.mixin;
+
+import net.eclipce.somnium.compat.geckolib.GeckoLibCompat;
+import net.eclipce.somnium.compat.geckolib.player.cast.SomniumCastAnimatable;
+import net.eclipce.somnium.compat.geckolib.player.cast.SomniumCastBoneApplicator;
+import net.minecraft.client.model.PlayerModel;
+import net.minecraft.world.entity.player.Player;
+import org.spongepowered.asm.mixin.Mixin;
+import org.spongepowered.asm.mixin.injection.At;
+import org.spongepowered.asm.mixin.injection.Inject;
+import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
+
+/**
+ * Injects into {@link PlayerModel#setupAnim} at RETURN so that Somnium's
+ * GeckoLib cast animation bone transforms are applied immediately after the
+ * vanilla model pose has been established.
+ *
+ * <h3>Why PlayerModel and not HumanoidModel?</h3>
+ * <p>{@code PlayerModel.setupAnim} calls {@code super.setupAnim} (HumanoidModel) and then
+ * additionally positions the jacket, sleeve, and pants overlay parts. Injecting at
+ * {@code RETURN} on {@code PlayerModel} ensures all twelve vanilla model parts —
+ * including the overlay layer — are fully set up before our bone application runs.</p>
+ *
+ * <h3>Why additive?</h3>
+ * <p>Vanilla sets each {@code ModelPart}'s rotation fields to match the current
+ * locomotion state (arm swing, head look, swimming lean, etc.). By adding our
+ * GeckoLib rotation deltas on top with {@code +=}, both animations coexist:
+ * a punch animation on {@code right_arm} adds to whatever arm swing vanilla computed,
+ * while every other bone remains exactly as vanilla set it.</p>
+ *
+ * <h3>Safety</h3>
+ * <p>The injection is guarded by both a GeckoLib availability check and an
+ * {@link SomniumCastAnimatable#isActive} check, making it a no-op for any player
+ * without an active cast animation.</p>
+ */
+@Mixin(PlayerModel.class)
+public abstract class PlayerModelSetupMixin {
+
+    @Inject(method = "setupAnim", at = @At("RETURN"))
+    private <T extends Player> void somnium$onSetupAnimReturn(
+            T entity,
+            float limbSwing,
+            float limbSwingAmount,
+            float ageInTicks,
+            float netHeadYaw,
+            float headPitch,
+            CallbackInfo ci) {
+
+        // Skip if GeckoLib not present or no active animation for this player
+        if (!GeckoLibCompat.isLoaded()) return;
+        if (!SomniumCastAnimatable.isActive(entity.getUUID())) return;
+
+        // Cast is safe: this mixin is on PlayerModel<T extends Player>
+        @SuppressWarnings("unchecked")
+        PlayerModel<T> self = (PlayerModel<T>) (Object) this;
+
+        // ageInTicks is used as a rough partial-tick approximation here;
+        // the Minecraft instance's frameTime is preferred when available.
+        float partialTick = net.minecraft.client.Minecraft.getInstance().getFrameTime();
+
+        SomniumCastBoneApplicator.apply(entity, self, partialTick);
+    }
+}

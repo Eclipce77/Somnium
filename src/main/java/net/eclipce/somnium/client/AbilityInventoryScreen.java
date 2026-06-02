@@ -803,31 +803,6 @@ public class AbilityInventoryScreen extends Screen {
             }
         }
 
-        // Power tab tooltips (left side)
-        if (data != null) {
-            java.util.List<net.eclipce.somnium.core.power.Power> powers =
-                    new java.util.ArrayList<>(data.getGrantedPowers());
-            int visibleCount = Math.min(powers.size() - tabScrollOffset, MAX_VISIBLE_TABS);
-            for (int v = 0; v < visibleCount; v++) {
-                int tabIndex = tabScrollOffset + v;
-                int tabX = leftPos + LEFT_TAB_REL_X;
-                int tabY = topPos + LEFT_TAB_START_REL_Y + v * LEFT_TAB_SPACING;
-                if (isInBounds(mouseX, mouseY, tabX, tabY, LEFT_TAB_W, LEFT_TAB_H)) {
-                    net.eclipce.somnium.core.power.Power power = powers.get(tabIndex);
-                    ResourceLocation key = net.eclipce.somnium.core.registry.SomniumRegistries
-                            .getPowerKey(power);
-                    String powerName = key != null ? key.getPath() : "Unknown";
-                    // Capitalize first letter
-                    powerName = powerName.substring(0, 1).toUpperCase()
-                            + powerName.substring(1).replace('_', ' ');
-                    graphics.renderTooltip(font,
-                            List.of(Component.literal(powerName)), Optional.empty(),
-                            mouseX, mouseY);
-                    return;
-                }
-            }
-        }
-
         // Grid tooltips
         int startIndex = gridScrollRow * GRID_COLS;
         for (int row = 0; row < GRID_ROWS; row++) {

@@ -123,6 +123,13 @@ public final class SomniumNetwork {
                 .consumerMainThread(QuickCategoryPacket::handle)
                 .add();
 
+        // ── GeckoLib cast animation (Server → All tracking clients) ──
+        CHANNEL.messageBuilder(PlayPlayerAnimationPacket.class, packetId++, NetworkDirection.PLAY_TO_CLIENT)
+                .encoder(PlayPlayerAnimationPacket::encode)
+                .decoder(PlayPlayerAnimationPacket::decode)
+                .consumerMainThread(PlayPlayerAnimationPacket::handle)
+                .add();
+
         Somnium.LOGGER.debug("Somnium network channel initialized with {} packet types", packetId);
     }
 

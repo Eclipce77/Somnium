@@ -66,6 +66,8 @@ public class AbilityType {
     private final java.util.Map<ResourceLocation, net.eclipce.somnium.core.meter.MeterCost> meterCosts;
     @Nullable
     private final String castAnimation;
+    @Nullable
+    private final net.minecraft.resources.ResourceLocation castAnimationModel;
     private final boolean compositionOptOut;
     private final boolean enabledOnGrant;
     private final boolean forced;
@@ -90,6 +92,7 @@ public class AbilityType {
         this.meterCosts = java.util.Collections.unmodifiableMap(
                 new java.util.LinkedHashMap<>(properties.meterCosts));
         this.castAnimation = properties.castAnimation;
+        this.castAnimationModel = properties.castAnimationModel;
         this.compositionOptOut = properties.compositionOptOut;
         this.enabledOnGrant = properties.enabledOnGrant;
         this.forced = properties.forced;
@@ -424,6 +427,15 @@ public class AbilityType {
         return castAnimation;
     }
 
+    /**
+     * @return the {@link net.eclipce.somnium.compat.geckolib.player.cast.CastAnimationModelRegistry}
+     *         key of the model that drives this ability's cast animation, or {@code null} if none.
+     */
+    @Nullable
+    public net.minecraft.resources.ResourceLocation getCastAnimationModel() {
+        return castAnimationModel;
+    }
+
     /** @return true if this ability should NOT grant composition on use */
     public boolean isCompositionOptOut() {
         return compositionOptOut;
@@ -523,6 +535,7 @@ public class AbilityType {
         final java.util.Map<ResourceLocation, net.eclipce.somnium.core.meter.MeterCost> meterCosts =
                 new java.util.LinkedHashMap<>();
         @Nullable String castAnimation = null;
+        @Nullable net.minecraft.resources.ResourceLocation castAnimationModel = null;
         boolean compositionOptOut = false;
         boolean enabledOnGrant = false;
         boolean forced = false;
@@ -676,6 +689,22 @@ public class AbilityType {
          */
         public Properties castAnimation(String animationName) {
             this.castAnimation = animationName;
+            return this;
+        }
+
+        /**
+         * Sets the GeckoLib cast animation and the model registry key that drives it.
+         *
+         * @param animationName the animation name declared in your {@code .animation.json}
+         *                      (e.g. {@code "animation.mymod.fire_cast"})
+         * @param modelId       key matching a model registered via
+         *                      {@link net.eclipce.somnium.compat.geckolib.player.cast.CastAnimationModelRegistry}
+         *                      (e.g. {@code new ResourceLocation("mymod", "fire_cast")})
+         */
+        public Properties castAnimation(String animationName,
+                                        net.minecraft.resources.ResourceLocation modelId) {
+            this.castAnimation = animationName;
+            this.castAnimationModel = modelId;
             return this;
         }
 

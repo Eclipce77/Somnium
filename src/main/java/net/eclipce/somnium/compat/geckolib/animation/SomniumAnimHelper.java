@@ -48,7 +48,7 @@ public final class SomniumAnimHelper {
      * @param animation      the animation to play
      */
     public static void triggerAnimation(Player player, String controllerName,
-                                         RawAnimation animation) {
+                                        RawAnimation animation) {
         TransformedPlayerAnimatable animatable =
                 TransformedPlayerAnimatable.getOrCreate(player);
         if (!animatable.hasActiveModel()) return;
@@ -72,7 +72,7 @@ public final class SomniumAnimHelper {
      * @param animationName  the animation name (e.g., "animation.mymod.cast")
      */
     public static void triggerAnimation(Player player, String controllerName,
-                                         String animationName) {
+                                        String animationName) {
         triggerAnimation(player, controllerName,
                 RawAnimation.begin().thenPlay(animationName));
     }
@@ -116,5 +116,36 @@ public final class SomniumAnimHelper {
                 .forEach(AnimationController::forceAnimationReset);
     }
 
-    private SomniumAnimHelper() {}
+    /**
+     * Triggers a GeckoLib cast animation on a player's vanilla model.
+     *
+     * <p>Sends a {@link net.eclipce.somnium.network.PlayPlayerAnimationPacket} to all
+     * clients tracking {@code player} (including the player themselves). Client-side, the
+     * {@link net.eclipce.somnium.compat.geckolib.mixin.PlayerModelSetupMixin} picks
+     * up the animation and applies bone-level transforms additively on top of the vanilla
+     * model pose, so locomotion animations and armor layers are unaffected.</p>
+     *
+     * <p>Only bones explicitly keyframed in the animation are altered. Bones not present
+     * in the animation contribute a zero delta and leave vanilla behaviour unchanged.</p>
+     *
+     * <p>Requires the target model to be registered via
+     * {@link net.eclipce.somnium.compat.geckolib.player.cast.CastAnimationModelRegistry}
+     * on the client before the packet arrives.</p>
+     *
+     * @param player        the server-side player performing the ability
+     * @param animationName animation name matching a key in your {@code .animation.json}
+     *                      (e.g. {@code "animation.mymod.fire_cast"})
+     * @param modelId       registry key matching a registered
+     *                      {@link net.eclipce.somnium.compat.geckolib.player.cast.SomniumCastModel}
+     *                      (e.g. {@code new ResourceLocation("mymod", "fire_cast")})
+     */
+    public static void triggerCastAnimation(net.minecraft.server.level.ServerPlayer player,
+                                            String animationName,
+                                            net.minecraft.resources.ResourceLocation modelId) {
+        if (animationName == null || modelId == null) return;
+        net.eclipce.somnium.network.SomniumNetwork.sendToTracking(
+                new net.eclipce.somnium.network.PlayPlayerAnimationPacket(
+                        player.getUUID(), animationName, modelId.toString()),
+                player);
+    }
 }

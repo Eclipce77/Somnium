@@ -174,6 +174,7 @@ public class ActivateAbilityPacket {
                     type.applyCosts(ctx);
                     type.applyMeterCosts(data);
                     ProgressionHandler.onAbilityActivated(ctx.getPlayer(), type);
+                    fireCastAnimation(type, ctx.getPlayer());
                 }
             }
             case TOGGLE -> {
@@ -187,6 +188,7 @@ public class ActivateAbilityPacket {
                         type.applyMeterCosts(data);
                         instance.setActive(true);
                         ProgressionHandler.onAbilityActivated(ctx.getPlayer(), type);
+                        fireCastAnimation(type, ctx.getPlayer());
                         if (type instanceof net.eclipce.somnium.core.ability.transformation.TransformationAbilityType) {
                             ResourceLocation transKey = SomniumRegistries.getAbilityKey(type);
                             data.setMostRecentTransformation(transKey);
@@ -244,5 +246,18 @@ public class ActivateAbilityPacket {
             // INSTANT, TOGGLE, PASSIVE — release is irrelevant
             default -> {}
         }
+    }
+
+    /**
+     * Fires the GeckoLib cast animation for an ability, if one is configured
+     * and GeckoLib is present. Sends to the activating player and all observers.
+     */
+    private static void fireCastAnimation(AbilityType type, ServerPlayer player) {
+        if (!net.eclipce.somnium.compat.geckolib.GeckoLibCompat.isLoaded()) return;
+        String anim = type.getCastAnimation();
+        net.minecraft.resources.ResourceLocation model = type.getCastAnimationModel();
+        if (anim == null || model == null) return;
+        net.eclipce.somnium.compat.geckolib.animation.SomniumAnimHelper
+                .triggerCastAnimation(player, anim, model);
     }
 }

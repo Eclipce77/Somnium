@@ -41,11 +41,14 @@ public abstract class DefaultSomniumCastModel extends SomniumCastModel {
             new ResourceLocation(Somnium.MOD_ID, "geo/default_player.geo.json");
 
     /**
-     * Placeholder texture — not rendered, but required by GeoModel.
-     * Addon devs may override to return a real texture if they also render the model.
+     * Placeholder texture — not rendered, but GeckoLib requires a valid, loadable
+     * ResourceLocation or {@code setCustomAnimations()} will throw and bone application
+     * will silently fail. Steve's skin is always present in vanilla.
+     *
+     * <p>Addon devs may override to return their own texture if they also render the model.</p>
      */
     private static final ResourceLocation PLACEHOLDER_TEXTURE =
-            new ResourceLocation(Somnium.MOD_ID, "textures/entity/default_player.png");
+            new ResourceLocation("minecraft", "textures/entity/player/wide/steve.png");
 
     @Override
     public ResourceLocation getModelResource(SomniumCastAnimatable animatable) {

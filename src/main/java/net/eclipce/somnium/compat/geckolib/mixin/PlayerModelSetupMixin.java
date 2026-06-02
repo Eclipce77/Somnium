@@ -4,7 +4,7 @@ import net.eclipce.somnium.compat.geckolib.GeckoLibCompat;
 import net.eclipce.somnium.compat.geckolib.player.cast.SomniumCastAnimatable;
 import net.eclipce.somnium.compat.geckolib.player.cast.SomniumCastBoneApplicator;
 import net.minecraft.client.model.PlayerModel;
-import net.minecraft.world.entity.player.Player;
+import net.minecraft.client.player.AbstractClientPlayer;
 import net.minecraft.world.entity.player.Player;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
@@ -39,7 +39,7 @@ public abstract class PlayerModelSetupMixin {
 
     @Inject(method = "setupAnim", at = @At("RETURN"))
     private void somnium$onSetupAnimReturn(
-            net.minecraft.world.entity.LivingEntity entity,  // erased type — must match bytecode
+            AbstractClientPlayer entity,  // actual erased type in PlayerModel — NOT LivingEntity
             float limbSwing,
             float limbSwingAmount,
             float ageInTicks,
@@ -47,16 +47,14 @@ public abstract class PlayerModelSetupMixin {
             float headPitch,
             CallbackInfo ci) {
 
-        // PlayerModel only receives Player instances in practice
-        if (!(entity instanceof Player player)) return;
-
         if (!GeckoLibCompat.isLoaded()) return;
-        if (!SomniumCastAnimatable.isActive(player.getUUID())) return;
+        if (!SomniumCastAnimatable.isActive(entity.getUUID())) return;
 
         @SuppressWarnings("unchecked")
-        PlayerModel<Player> self = (PlayerModel<Player>) (Object) this;
+        PlayerModel<AbstractClientPlayer> self =
+                (PlayerModel<AbstractClientPlayer>) (Object) this;
 
         float partialTick = net.minecraft.client.Minecraft.getInstance().getFrameTime();
-        SomniumCastBoneApplicator.apply(player, self, partialTick);
+        SomniumCastBoneApplicator.apply(entity, self, partialTick);
     }
 }

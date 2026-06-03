@@ -44,6 +44,11 @@ public final class SomniumCastBoneApplicator {
      * @param partialTick render partial tick from the event
      */
     public static void apply(Player player, PlayerModel<?> playerModel, float partialTick) {
+        // Clear scale data from the previous rendered player before writing new data.
+        // This must happen unconditionally — even if there is no active animation —
+        // so that scale data never carries over across players in the same frame.
+        SomniumBoneScaleMap.clearAll();
+
         SomniumCastAnimatable animatable = SomniumCastAnimatable.getOrCreate(player.getUUID());
 
         // Consume any packet-queued animation before checking isActive
@@ -134,6 +139,18 @@ public final class SomniumCastBoneApplicator {
         if (px != 0f) part.x += px;
         if (py != 0f) part.y -= py;   // flip Y to match vanilla coordinate system
         if (pz != 0f) part.z += pz;
+
+        // ── Multiplicative scale (applied via PoseStack in ModelPartRenderMixin) ──
+        // Scale cannot be stored as a field on ModelPart — it must be applied via
+        // PoseStack.scale() at render time. Values are written to SomniumBoneScaleMap
+        // and read by ModelPartRenderMixin after translateAndRotate() positions the
+        // PoseStack at this bone's pivot. Identity scale (1, 1, 1) is a no-op.
+        float sx = bone.getScaleX();
+        float sy = bone.getScaleY();
+        float sz = bone.getScaleZ();
+        if (sx != 1f || sy != 1f || sz != 1f) {
+            SomniumBoneScaleMap.setScale(part, sx, sy, sz);
+        }
     }
 
     private SomniumCastBoneApplicator() {}

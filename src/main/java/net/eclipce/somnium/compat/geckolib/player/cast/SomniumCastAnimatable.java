@@ -49,6 +49,12 @@ public class SomniumCastAnimatable implements GeoAnimatable {
     @Nullable
     private String activeModelId = null;
 
+    // Cached RawAnimation to avoid creating a new instance every render frame.
+    // GeckoLib compares by reference when deciding whether to restart — a new
+    // object each frame means the animation restarts from frame 0 every tick.
+    @Nullable private String cachedAnimName = null;
+    @Nullable private RawAnimation cachedRawAnimation = null;
+
     private SomniumCastAnimatable(UUID playerUuid) {
         this.playerUuid = playerUuid;
         this.instanceId = NEXT_INSTANCE_ID.getAndIncrement();
@@ -137,10 +143,16 @@ public class SomniumCastAnimatable implements GeoAnimatable {
         registrar.add(new AnimationController<>(this, "somnium_cast", 0, state -> {
             if (activeAnimation == null) return PlayState.STOP;
 
-            // The controller plays the animation once; GeckoLib will set
-            // hasAnimationFinished() when it is done.
-            state.getController().setAnimation(
-                    RawAnimation.begin().thenPlay(activeAnimation));
+            // Build or reuse the RawAnimation for this animation name.
+            // We must NOT create RawAnimation.begin().thenPlay() every frame —
+            // GeckoLib uses reference equality to detect "same animation" and
+            // would restart from frame 0 every tick if given a new object each frame.
+            if (!activeAnimation.equals(cachedAnimName) || cachedRawAnimation == null) {
+                cachedRawAnimation = RawAnimation.begin().thenPlay(activeAnimation);
+                cachedAnimName = activeAnimation;
+            }
+
+            state.getController().setAnimation(cachedRawAnimation);
 
             if (state.getController().hasAnimationFinished()) {
                 onAnimationFinished();

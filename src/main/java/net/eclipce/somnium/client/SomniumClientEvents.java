@@ -4,7 +4,9 @@ import net.eclipce.somnium.Somnium;
 import net.eclipce.somnium.client.keybind.SomniumKeybinds;
 import net.eclipce.somnium.core.ability.AbilityInstance;
 import net.eclipce.somnium.core.data.SomniumPlayerData;
+import net.eclipce.somnium.core.meter.MeterInstance;
 import net.eclipce.somnium.network.ActivateAbilityPacket;
+import net.eclipce.somnium.network.QuickCategoryPacket;
 import net.eclipce.somnium.network.QuickTransformPacket;
 import net.eclipce.somnium.network.SomniumNetwork;
 import net.minecraft.client.KeyMapping;
@@ -214,6 +216,18 @@ public class SomniumClientEvents {
                 } else {
                     AbilityBarOverlay.toggleTransformationBar();
                 }
+            }
+        }
+
+        /**
+         * Clears all GeckoLib cast animation state when the local player disconnects.
+         * Without this, the per-UUID instance map in {@link net.eclipce.somnium.compat.geckolib.player.cast.SomniumCastAnimatable}
+         * would grow permanently over a session as players come and go.
+         */
+        @SubscribeEvent
+        public static void onPlayerLogout(net.minecraftforge.client.event.ClientPlayerNetworkEvent.LoggingOut event) {
+            if (net.eclipce.somnium.compat.geckolib.GeckoLibCompat.isLoaded()) {
+                net.eclipce.somnium.compat.geckolib.player.cast.SomniumCastAnimatable.clearAll();
             }
         }
     }

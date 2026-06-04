@@ -71,8 +71,27 @@ public final class SomniumCastBoneApplicator {
             return;
         }
 
-        // ── Run the GeckoLib animation processor without rendering ──
-        // This updates all GeoBone transforms in the BakedGeoModel for the current frame.
+        // ── Load the baked model FIRST ──
+        // GeckoLib's GeoModel#getBakedModel populates the AnimationProcessor's bone registry
+        // as a side-effect (setActiveModel). If this is skipped, setCustomAnimations silently
+        // no-ops because tickAnimation gates on a non-empty bone set — no exception, no log,
+        // no animation. Every standard GeckoLib renderer calls getBakedModel before
+        // setCustomAnimations for this reason.
+        BakedGeoModel bakedModel;
+        try {
+            bakedModel = model.getBakedModel(model.getModelResource(animatable));
+        } catch (Exception e) {
+            LOGGER.error("[Somnium] CastAnimation: getBakedModel threw for resource '{}'. " +
+                            "This usually means the geo.json could not be loaded — check the resource path is correct " +
+                            "and the file exists in assets/<modid>/geo/.",
+                    model.getModelResource(animatable));
+            LOGGER.error("[Somnium] CastAnimation: exception detail", e);
+            return;
+        }
+
+        // ── Now run the animation processor ──
+        // This updates the registered bones' transforms for the current frame based on the
+        // queued RawAnimation. Reads the bones registered above via the side-effect of getBakedModel.
         AnimationState<SomniumCastAnimatable> state =
                 new AnimationState<>(animatable, 0f, 0f, partialTick, false);
 
@@ -83,19 +102,6 @@ public final class SomniumCastBoneApplicator {
                             "This usually means the animation JSON could not be loaded — check the resource path is correct " +
                             "and the file exists in assets/<modid>/animations/.",
                     animatable.getActiveAnimation(), animatable.getActiveModelId());
-            LOGGER.error("[Somnium] CastAnimation: exception detail", e);
-            return;
-        }
-
-        // ── Apply bone transforms to the vanilla PlayerModel ──
-        BakedGeoModel bakedModel;
-        try {
-            bakedModel = model.getBakedModel(model.getModelResource(animatable));
-        } catch (Exception e) {
-            LOGGER.error("[Somnium] CastAnimation: getBakedModel threw for resource '{}'. " +
-                            "This usually means the geo.json could not be loaded — check the resource path is correct " +
-                            "and the file exists in assets/<modid>/geo/.",
-                    model.getModelResource(animatable));
             LOGGER.error("[Somnium] CastAnimation: exception detail", e);
             return;
         }

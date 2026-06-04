@@ -1,9 +1,11 @@
 package net.eclipce.somnium.compat.geckolib.player.cast;
 
+import com.mojang.logging.LogUtils;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.model.PlayerModel;
 import net.minecraft.client.model.geom.ModelPart;
 import net.minecraft.world.entity.player.Player;
+import org.slf4j.Logger;
 import software.bernie.geckolib.cache.object.BakedGeoModel;
 import software.bernie.geckolib.cache.object.GeoBone;
 import software.bernie.geckolib.core.animation.AnimationState;
@@ -35,6 +37,8 @@ import java.util.Optional;
  */
 public final class SomniumCastBoneApplicator {
 
+    private static final Logger LOGGER = LogUtils.getLogger();
+
     /**
      * Entry point called by {@link net.eclipce.somnium.compat.geckolib.mixin.PlayerModelSetupMixin}.
      * No-ops gracefully if the player has no active animation or model.
@@ -59,7 +63,10 @@ public final class SomniumCastBoneApplicator {
         // Resolve the model registered for this animation's modelId
         SomniumCastModel model = CastAnimationModelRegistry.get(animatable.getActiveModelId());
         if (model == null) {
-            // No model registered — clear the animation so we don't loop forever
+            LOGGER.warn("[Somnium] CastAnimation: no model registered for id '{}' — " +
+                            "verify CastAnimationModelRegistry.register() was called during FMLClientSetupEvent " +
+                            "and that the id matches exactly (including namespace).",
+                    animatable.getActiveModelId());
             animatable.onAnimationFinished();
             return;
         }
@@ -72,7 +79,11 @@ public final class SomniumCastBoneApplicator {
         try {
             model.setCustomAnimations(animatable, animatable.getInstanceId(), state);
         } catch (Exception e) {
-            // Guard against any model-loading issues on the first frame
+            LOGGER.error("[Somnium] CastAnimation: setCustomAnimations threw for animation '{}' with model id '{}'. " +
+                            "This usually means the animation JSON could not be loaded — check the resource path is correct " +
+                            "and the file exists in assets/<modid>/animations/.",
+                    animatable.getActiveAnimation(), animatable.getActiveModelId());
+            LOGGER.error("[Somnium] CastAnimation: exception detail", e);
             return;
         }
 
@@ -81,6 +92,11 @@ public final class SomniumCastBoneApplicator {
         try {
             bakedModel = model.getBakedModel(model.getModelResource(animatable));
         } catch (Exception e) {
+            LOGGER.error("[Somnium] CastAnimation: getBakedModel threw for resource '{}'. " +
+                            "This usually means the geo.json could not be loaded — check the resource path is correct " +
+                            "and the file exists in assets/<modid>/geo/.",
+                    model.getModelResource(animatable));
+            LOGGER.error("[Somnium] CastAnimation: exception detail", e);
             return;
         }
 
@@ -103,7 +119,8 @@ public final class SomniumCastBoneApplicator {
         applyBoneIfPresent(bakedModel, playerModel, "right_leg");
         applyBoneIfPresent(bakedModel, playerModel, "right_pants");
         applyBoneIfPresent(bakedModel, playerModel, "left_leg");
-        applyBoneIfPresent(bakedModel, playerModel, "left_pants");    }
+        applyBoneIfPresent(bakedModel, playerModel, "left_pants");
+    }
 
     private static void applyBoneIfPresent(BakedGeoModel baked,
                                            PlayerModel<?> playerModel,

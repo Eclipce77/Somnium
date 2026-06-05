@@ -143,6 +143,24 @@ public final class SomniumCastBoneApplicator {
         AnimationState<SomniumCastAnimatable> state =
                 new AnimationState<>(animatable, 0f, 0f, partialTick, false);
 
+        // BEFORE setCustomAnimations: log all the gates that might early-return
+        if (frameCountForCurrentAnim < 3) {
+            try {
+                software.bernie.geckolib.core.animation.AnimatableManager<?> mgr =
+                        animatable.getAnimatableInstanceCache().getManagerForId(animatable.getInstanceId());
+                int boneCount = model.getAnimationProcessor().getRegisteredBones().size();
+                System.out.println("[Somnium-DIAG] PRE-SCA frame=" + frameCountForCurrentAnim
+                        + " bones=" + boneCount
+                        + " firstTickTime=" + mgr.getFirstTickTime()
+                        + " lastUpdateTime=" + mgr.getLastUpdateTime()
+                        + " controllers=" + mgr.getAnimationControllers().size()
+                        + " activeAnim='" + animatable.getActiveAnimation() + "'"
+                        + " currentTickRU=" + software.bernie.geckolib.util.RenderUtils.getCurrentTick());
+            } catch (Throwable t) {
+                System.out.println("[Somnium-DIAG] PRE-SCA probe threw: " + t);
+            }
+        }
+
         try {
             model.setCustomAnimations(animatable, animatable.getInstanceId(), state);
         } catch (Exception e) {
@@ -151,6 +169,47 @@ public final class SomniumCastBoneApplicator {
                     animatable.getActiveAnimation());
             LOGGER.error("[Somnium] CastAnimation: exception detail", e);
             return;
+        }
+
+        // AFTER setCustomAnimations: log the manager state again to see if it changed
+        if (frameCountForCurrentAnim < 3) {
+            try {
+                software.bernie.geckolib.core.animation.AnimatableManager<?> mgr =
+                        animatable.getAnimatableInstanceCache().getManagerForId(animatable.getInstanceId());
+                System.out.println("[Somnium-DIAG] POST-SCA frame=" + frameCountForCurrentAnim
+                        + " firstTickTime=" + mgr.getFirstTickTime()
+                        + " lastUpdateTime=" + mgr.getLastUpdateTime());
+            } catch (Throwable t) {
+                System.out.println("[Somnium-DIAG] POST-SCA probe threw: " + t);
+            }
+        }
+
+        // MANUAL BYPASS: if setCustomAnimations didn't fire the predicate, call tickAnimation directly.
+        // This sidesteps any early-return gates inside setCustomAnimations. If the predicate fires here,
+        // we know the problem is one of setCustomAnimations' internal guards.
+        if (frameCountForCurrentAnim == 0) {
+            try {
+                software.bernie.geckolib.core.animation.AnimatableManager<SomniumCastAnimatable> mgr =
+                        animatable.getAnimatableInstanceCache().getManagerForId(animatable.getInstanceId());
+                double seekTime = software.bernie.geckolib.util.RenderUtils.getCurrentTick() + partialTick;
+                if (mgr.getFirstTickTime() == -1) {
+                    mgr.startedAt(seekTime);
+                }
+                System.out.println("[Somnium-DIAG] MANUAL tickAnimation: calling directly with seekTime=" + seekTime);
+                model.getAnimationProcessor().tickAnimation(
+                        animatable, model, mgr, seekTime, state, false);
+                System.out.println("[Somnium-DIAG] MANUAL tickAnimation: returned");
+                // Re-read bone state after manual call
+                Optional<GeoBone> rightArmManual = bakedModel.getBone("right_arm");
+                if (rightArmManual.isPresent()) {
+                    GeoBone b = rightArmManual.get();
+                    System.out.println("[Somnium-DIAG] MANUAL post-call: right_arm rot=("
+                            + b.getRotX() + ", " + b.getRotY() + ", " + b.getRotZ() + ")");
+                }
+            } catch (Throwable t) {
+                System.out.println("[Somnium-DIAG] MANUAL tickAnimation THREW " + t);
+                t.printStackTrace();
+            }
         }
 
         // Probe bone transforms periodically across the animation lifetime

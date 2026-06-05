@@ -56,6 +56,9 @@ public abstract class PlayerModelSetupMixin {
         PlayerModel<Player> self = (PlayerModel<Player>) (Object) this;
 
         float partialTick = net.minecraft.client.Minecraft.getInstance().getFrameTime();
+        System.out.println("[Somnium-DIAG] PlayerModelSetupMixin: GUARDS PASSED — calling apply for "
+                + player.getName().getString() + " uuid=" + player.getUUID()
+                + " modelClass=" + self.getClass().getSimpleName());
         SomniumCastBoneApplicator.apply(player, self, partialTick);
     }
 }

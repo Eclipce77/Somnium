@@ -48,8 +48,13 @@ public class PlayPlayerAnimationPacket {
     // ─── Handler (runs on client main thread) ────────────────────────────────
 
     public void handle(Supplier<NetworkEvent.Context> ctx) {
-        ctx.get().enqueueWork(() ->
-                SomniumCastAnimatable.setAnimation(playerUuid, animationName, modelId));
+        System.out.println("[Somnium-DIAG] PlayPlayerAnimationPacket.handle: RECEIVED on client"
+                + " uuid=" + playerUuid + " anim=" + animationName + " model=" + modelId
+                + " direction=" + ctx.get().getDirection());
+        ctx.get().enqueueWork(() -> {
+            System.out.println("[Somnium-DIAG] PlayPlayerAnimationPacket.handle: enqueued work running on main thread");
+            SomniumCastAnimatable.setAnimation(playerUuid, animationName, modelId);
+        });
         ctx.get().setPacketHandled(true);
     }
 }

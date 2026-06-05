@@ -142,10 +142,17 @@ public final class SomniumAnimHelper {
     public static void triggerCastAnimation(net.minecraft.server.level.ServerPlayer player,
                                             String animationName,
                                             net.minecraft.resources.ResourceLocation modelId) {
-        if (animationName == null || modelId == null) return;
+        System.out.println("[Somnium-DIAG] triggerCastAnimation: player=" + player.getName().getString()
+                + " uuid=" + player.getUUID() + " anim=" + animationName + " model=" + modelId);
+        if (animationName == null || modelId == null) {
+            System.out.println("[Somnium-DIAG] triggerCastAnimation: ABORTED — null arg");
+            return;
+        }
+        System.out.println("[Somnium-DIAG] triggerCastAnimation: sending PlayPlayerAnimationPacket via sendToTracking");
         net.eclipce.somnium.network.SomniumNetwork.sendToTracking(
                 new net.eclipce.somnium.network.PlayPlayerAnimationPacket(
                         player.getUUID(), animationName, modelId.toString()),
                 player);
+        System.out.println("[Somnium-DIAG] triggerCastAnimation: sendToTracking returned");
     }
 }

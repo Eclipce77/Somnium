@@ -58,11 +58,20 @@ public final class SomniumCastBoneApplicator {
         // Consume any packet-queued animation before checking isActive
         animatable.consumeQueue();
 
-        if (animatable.getActiveAnimation() == null) return;
+        if (animatable.getActiveAnimation() == null) {
+            System.out.println("[Somnium-DIAG] apply: STOPPED — activeAnimation is null after consumeQueue (uuid=" + player.getUUID() + ")");
+            return;
+        }
+
+        System.out.println("[Somnium-DIAG] apply: ENTERED for " + player.getName().getString()
+                + " anim=" + animatable.getActiveAnimation()
+                + " modelId=" + animatable.getActiveModelId()
+                + " partialTick=" + partialTick);
 
         // Resolve the model registered for this animation's modelId
         SomniumCastModel model = CastAnimationModelRegistry.get(animatable.getActiveModelId());
         if (model == null) {
+            System.out.println("[Somnium-DIAG] apply: STOPPED — no model registered for id '" + animatable.getActiveModelId() + "'");
             LOGGER.warn("[Somnium] CastAnimation: no model registered for id '{}' — " +
                             "verify CastAnimationModelRegistry.register() was called during FMLClientSetupEvent " +
                             "and that the id matches exactly (including namespace).",
@@ -70,6 +79,7 @@ public final class SomniumCastBoneApplicator {
             animatable.onAnimationFinished();
             return;
         }
+        System.out.println("[Somnium-DIAG] apply: model resolved -> " + model.getClass().getName());
 
         // ── Load the baked model FIRST ──
         // GeckoLib's GeoModel#getBakedModel populates the AnimationProcessor's bone registry
@@ -79,8 +89,14 @@ public final class SomniumCastBoneApplicator {
         // setCustomAnimations for this reason.
         BakedGeoModel bakedModel;
         try {
-            bakedModel = model.getBakedModel(model.getModelResource(animatable));
+            net.minecraft.resources.ResourceLocation modelRes = model.getModelResource(animatable);
+            System.out.println("[Somnium-DIAG] apply: calling getBakedModel for " + modelRes);
+            bakedModel = model.getBakedModel(modelRes);
+            System.out.println("[Somnium-DIAG] apply: getBakedModel returned; topLevelBones="
+                    + (bakedModel == null ? "NULL" : bakedModel.topLevelBones().size())
+                    + " processorBones=" + model.getAnimationProcessor().getRegisteredBones().size());
         } catch (Exception e) {
+            System.out.println("[Somnium-DIAG] apply: getBakedModel THREW " + e);
             LOGGER.error("[Somnium] CastAnimation: getBakedModel threw for resource '{}'. " +
                             "This usually means the geo.json could not be loaded — check the resource path is correct " +
                             "and the file exists in assets/<modid>/geo/.",
@@ -96,8 +112,11 @@ public final class SomniumCastBoneApplicator {
                 new AnimationState<>(animatable, 0f, 0f, partialTick, false);
 
         try {
+            System.out.println("[Somnium-DIAG] apply: calling setCustomAnimations with instanceId=" + animatable.getInstanceId());
             model.setCustomAnimations(animatable, animatable.getInstanceId(), state);
+            System.out.println("[Somnium-DIAG] apply: setCustomAnimations returned");
         } catch (Exception e) {
+            System.out.println("[Somnium-DIAG] apply: setCustomAnimations THREW " + e);
             LOGGER.error("[Somnium] CastAnimation: setCustomAnimations threw for animation '{}' with model id '{}'. " +
                             "This usually means the animation JSON could not be loaded — check the resource path is correct " +
                             "and the file exists in assets/<modid>/animations/.",
@@ -106,7 +125,20 @@ public final class SomniumCastBoneApplicator {
             return;
         }
 
+        // Probe a few bone transforms so we can see whether the processor actually produced motion
+        Optional<GeoBone> rightArm = bakedModel.getBone("right_arm");
+        if (rightArm.isPresent()) {
+            GeoBone b = rightArm.get();
+            System.out.println("[Somnium-DIAG] apply: bone right_arm rotX=" + b.getRotX()
+                    + " rotY=" + b.getRotY() + " rotZ=" + b.getRotZ()
+                    + " posX=" + b.getPosX() + " posY=" + b.getPosY() + " posZ=" + b.getPosZ());
+        } else {
+            System.out.println("[Somnium-DIAG] apply: bone right_arm NOT FOUND in baked model");
+        }
+
+        System.out.println("[Somnium-DIAG] apply: calling applyAllBones");
         applyAllBones(bakedModel, playerModel);
+        System.out.println("[Somnium-DIAG] apply: COMPLETE");
     }
 
     // ─── Bone application ────────────────────────────────────────────────────

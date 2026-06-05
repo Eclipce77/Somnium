@@ -76,9 +76,13 @@ public class SomniumCastAnimatable implements GeoAnimatable {
      * @param modelId       the registry key of the {@link SomniumCastModel} to use
      */
     public static void setAnimation(UUID uuid, String animationName, String modelId) {
+        System.out.println("[Somnium-DIAG] SomniumCastAnimatable.setAnimation: uuid=" + uuid
+                + " anim=" + animationName + " model=" + modelId);
         getOrCreate(uuid); // ensure instance exists
         QUEUED_ANIM.put(uuid, animationName);
         QUEUED_MODEL.put(uuid, modelId);
+        System.out.println("[Somnium-DIAG] SomniumCastAnimatable.setAnimation: QUEUED_ANIM now contains "
+                + QUEUED_ANIM.size() + " entries; isActive(uuid)=" + isActive(uuid));
     }
 
     /**
@@ -114,6 +118,8 @@ public class SomniumCastAnimatable implements GeoAnimatable {
     public void consumeQueue() {
         String queued = QUEUED_ANIM.remove(playerUuid);
         if (queued != null) {
+            System.out.println("[Somnium-DIAG] consumeQueue: transitioning queued '" + queued
+                    + "' to active for uuid=" + playerUuid);
             activeAnimation = queued;
             activeModelId = QUEUED_MODEL.remove(playerUuid);
             // Force the controller to restart on this new animation

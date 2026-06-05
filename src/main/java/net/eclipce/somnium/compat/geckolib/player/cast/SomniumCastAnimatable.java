@@ -149,22 +149,19 @@ public class SomniumCastAnimatable implements GeoAnimatable {
         registrar.add(new AnimationController<>(this, "somnium_cast", 0, state -> {
             if (activeAnimation == null) return PlayState.STOP;
 
-            // Build or reuse the RawAnimation for this animation name.
-            // We must NOT create RawAnimation.begin().thenPlay() every frame —
-            // GeckoLib uses reference equality to detect "same animation" and
-            // would restart from frame 0 every tick if given a new object each frame.
+            // Build/reuse the RawAnimation. Reference identity matters — a fresh
+            // RawAnimation every frame would force the controller to restart from frame 0.
             if (!activeAnimation.equals(cachedAnimName) || cachedRawAnimation == null) {
                 cachedRawAnimation = RawAnimation.begin().thenPlay(activeAnimation);
                 cachedAnimName = activeAnimation;
+                System.out.println("[Somnium-DIAG] predicate: built new cachedRawAnimation for '" + activeAnimation + "'");
             }
 
-            state.getController().setAnimation(cachedRawAnimation);
-
-            if (state.getController().hasAnimationFinished()) {
-                onAnimationFinished();
-                return PlayState.STOP;
-            }
-            return PlayState.CONTINUE;
+            // Idiomatic GeckoLib: setAndContinue handles setAnimation + return CONTINUE.
+            // Do NOT call hasAnimationFinished() in the same tick as setAnimation —
+            // on a fresh controller, currentAnimation is still null until process() runs,
+            // which can cause spurious "finished" results.
+            return state.setAndContinue(cachedRawAnimation);
         }));
     }
 

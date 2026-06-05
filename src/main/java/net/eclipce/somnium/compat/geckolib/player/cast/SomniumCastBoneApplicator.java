@@ -153,8 +153,8 @@ public final class SomniumCastBoneApplicator {
             return;
         }
 
-        // Probe bone transforms only once per animation, not every frame
-        if (frameCountForCurrentAnim < 5) {
+        // Probe bone transforms periodically across the animation lifetime
+        if (frameCountForCurrentAnim < 60 && (frameCountForCurrentAnim < 10 || frameCountForCurrentAnim % 10 == 0)) {
             Optional<GeoBone> rightArm = bakedModel.getBone("right_arm");
             if (rightArm.isPresent()) {
                 GeoBone b = rightArm.get();
@@ -162,8 +162,25 @@ public final class SomniumCastBoneApplicator {
                         + b.getRotX() + ", " + b.getRotY() + ", " + b.getRotZ() + ") pos=("
                         + b.getPosX() + ", " + b.getPosY() + ", " + b.getPosZ() + ") partialTick=" + partialTick);
             }
-            frameCountForCurrentAnim++;
+
+            // Probe the controller state — what animation is currently playing, what state is it in?
+            try {
+                software.bernie.geckolib.core.animation.AnimatableManager<?> mgr =
+                        animatable.getAnimatableInstanceCache().getManagerForId(animatable.getInstanceId());
+                java.util.Map<String, ? extends software.bernie.geckolib.core.animation.AnimationController<?>> controllers =
+                        mgr.getAnimationControllers();
+                for (software.bernie.geckolib.core.animation.AnimationController<?> ctrl : controllers.values()) {
+                    Object currentAnim = ctrl.getCurrentAnimation();
+                    System.out.println("[Somnium-DIAG] FRAME " + frameCountForCurrentAnim + ": controller '" + ctrl.getName()
+                            + "' state=" + ctrl.getAnimationState()
+                            + " currentAnim=" + (currentAnim == null ? "null" : currentAnim.toString())
+                            + " hasFinished=" + ctrl.hasAnimationFinished());
+                }
+            } catch (Throwable t) {
+                System.out.println("[Somnium-DIAG] FRAME " + frameCountForCurrentAnim + ": controller probe THREW " + t);
+            }
         }
+        frameCountForCurrentAnim++;
 
         applyAllBones(bakedModel, playerModel);
     }

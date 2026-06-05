@@ -39,6 +39,10 @@ public final class SomniumCastBoneApplicator {
 
     private static final Logger LOGGER = LogUtils.getLogger();
 
+    // ── Probe state (diagnostic only) ──
+    private static String probedAnim = null;
+    private static int frameCountForCurrentAnim = 0;
+
     /**
      * Entry point called by {@link net.eclipce.somnium.compat.geckolib.mixin.PlayerModelSetupMixin}.
      * No-ops gracefully if the player has no active animation or model.
@@ -59,27 +63,22 @@ public final class SomniumCastBoneApplicator {
         animatable.consumeQueue();
 
         if (animatable.getActiveAnimation() == null) {
-            System.out.println("[Somnium-DIAG] apply: STOPPED — activeAnimation is null after consumeQueue (uuid=" + player.getUUID() + ")");
             return;
         }
 
-        System.out.println("[Somnium-DIAG] apply: ENTERED for " + player.getName().getString()
-                + " anim=" + animatable.getActiveAnimation()
-                + " modelId=" + animatable.getActiveModelId()
-                + " partialTick=" + partialTick);
+        // Reset frame counter when starting a new animation
+        if (!animatable.getActiveAnimation().equals(probedAnim)) {
+            frameCountForCurrentAnim = 0;
+        }
 
         // Resolve the model registered for this animation's modelId
         SomniumCastModel model = CastAnimationModelRegistry.get(animatable.getActiveModelId());
         if (model == null) {
-            System.out.println("[Somnium-DIAG] apply: STOPPED — no model registered for id '" + animatable.getActiveModelId() + "'");
-            LOGGER.warn("[Somnium] CastAnimation: no model registered for id '{}' — " +
-                            "verify CastAnimationModelRegistry.register() was called during FMLClientSetupEvent " +
-                            "and that the id matches exactly (including namespace).",
+            LOGGER.warn("[Somnium] CastAnimation: no model registered for id '{}'.",
                     animatable.getActiveModelId());
             animatable.onAnimationFinished();
             return;
         }
-        System.out.println("[Somnium-DIAG] apply: model resolved -> " + model.getClass().getName());
 
         // ── Load the baked model FIRST ──
         // GeckoLib's GeoModel#getBakedModel populates the AnimationProcessor's bone registry
@@ -90,55 +89,83 @@ public final class SomniumCastBoneApplicator {
         BakedGeoModel bakedModel;
         try {
             net.minecraft.resources.ResourceLocation modelRes = model.getModelResource(animatable);
-            System.out.println("[Somnium-DIAG] apply: calling getBakedModel for " + modelRes);
             bakedModel = model.getBakedModel(modelRes);
-            System.out.println("[Somnium-DIAG] apply: getBakedModel returned; topLevelBones="
-                    + (bakedModel == null ? "NULL" : bakedModel.topLevelBones().size())
-                    + " processorBones=" + model.getAnimationProcessor().getRegisteredBones().size());
         } catch (Exception e) {
             System.out.println("[Somnium-DIAG] apply: getBakedModel THREW " + e);
-            LOGGER.error("[Somnium] CastAnimation: getBakedModel threw for resource '{}'. " +
-                            "This usually means the geo.json could not be loaded — check the resource path is correct " +
-                            "and the file exists in assets/<modid>/geo/.",
+            LOGGER.error("[Somnium] CastAnimation: getBakedModel threw for resource '{}'.",
                     model.getModelResource(animatable));
             LOGGER.error("[Somnium] CastAnimation: exception detail", e);
             return;
         }
 
-        // ── Now run the animation processor ──
-        // This updates the registered bones' transforms for the current frame based on the
-        // queued RawAnimation. Reads the bones registered above via the side-effect of getBakedModel.
+        // ── ONE-SHOT PROBE: only logged once per new animation, not every frame ──
+        if (!animatable.getActiveAnimation().equals(probedAnim)) {
+            probedAnim = animatable.getActiveAnimation();
+            net.minecraft.resources.ResourceLocation animRes = model.getAnimationResource(animatable);
+            System.out.println("[Somnium-DIAG] PROBE: animation resource = " + animRes);
+
+            // 1) Is the animation file in the GeckoLib cache?
+            Object bakedAnims = software.bernie.geckolib.cache.GeckoLibCache.getBakedAnimations().get(animRes);
+            System.out.println("[Somnium-DIAG] PROBE: GeckoLibCache.getInstance().getBakedAnimations().get(animRes) = "
+                    + (bakedAnims == null ? "NULL — file not loaded by GeckoLib's resource listener" : bakedAnims.getClass().getSimpleName()));
+
+            // 2) Can we look up our specific animation name from the model?
+            try {
+                software.bernie.geckolib.core.animation.Animation anim =
+                        model.getAnimation(animatable, animatable.getActiveAnimation());
+                System.out.println("[Somnium-DIAG] PROBE: model.getAnimation('" + animatable.getActiveAnimation() + "') = "
+                        + (anim == null ? "NULL — name not found in animation file" :
+                        "FOUND length=" + anim.length() + " loopType=" + anim.loopType()
+                                + " boneCount=" + anim.boneAnimations().length));
+                if (anim != null && anim.boneAnimations() != null) {
+                    for (int i = 0; i < anim.boneAnimations().length; i++) {
+                        Object ba = anim.boneAnimations()[i];
+                        System.out.println("[Somnium-DIAG] PROBE:   bone[" + i + "] = " + ba);
+                    }
+                }
+            } catch (Throwable t) {
+                System.out.println("[Somnium-DIAG] PROBE: model.getAnimation THREW " + t);
+            }
+
+            // 3) List a few cache entries so we can see what keys ARE registered
+            System.out.println("[Somnium-DIAG] PROBE: GeckoLibCache has " + software.bernie.geckolib.cache.GeckoLibCache.getBakedAnimations().size() + " animation files cached. Sample keys:");
+            int shown = 0;
+            for (net.minecraft.resources.ResourceLocation k : software.bernie.geckolib.cache.GeckoLibCache.getBakedAnimations().keySet()) {
+                if (k.getNamespace().equals("romancedawn") || shown < 5) {
+                    System.out.println("[Somnium-DIAG] PROBE:   cached key = " + k);
+                    shown++;
+                }
+                if (shown >= 15) break;
+            }
+        }
+
+        // ── Run the animation processor ──
         AnimationState<SomniumCastAnimatable> state =
                 new AnimationState<>(animatable, 0f, 0f, partialTick, false);
 
         try {
-            System.out.println("[Somnium-DIAG] apply: calling setCustomAnimations with instanceId=" + animatable.getInstanceId());
             model.setCustomAnimations(animatable, animatable.getInstanceId(), state);
-            System.out.println("[Somnium-DIAG] apply: setCustomAnimations returned");
         } catch (Exception e) {
             System.out.println("[Somnium-DIAG] apply: setCustomAnimations THREW " + e);
-            LOGGER.error("[Somnium] CastAnimation: setCustomAnimations threw for animation '{}' with model id '{}'. " +
-                            "This usually means the animation JSON could not be loaded — check the resource path is correct " +
-                            "and the file exists in assets/<modid>/animations/.",
-                    animatable.getActiveAnimation(), animatable.getActiveModelId());
+            LOGGER.error("[Somnium] CastAnimation: setCustomAnimations threw for animation '{}'.",
+                    animatable.getActiveAnimation());
             LOGGER.error("[Somnium] CastAnimation: exception detail", e);
             return;
         }
 
-        // Probe a few bone transforms so we can see whether the processor actually produced motion
-        Optional<GeoBone> rightArm = bakedModel.getBone("right_arm");
-        if (rightArm.isPresent()) {
-            GeoBone b = rightArm.get();
-            System.out.println("[Somnium-DIAG] apply: bone right_arm rotX=" + b.getRotX()
-                    + " rotY=" + b.getRotY() + " rotZ=" + b.getRotZ()
-                    + " posX=" + b.getPosX() + " posY=" + b.getPosY() + " posZ=" + b.getPosZ());
-        } else {
-            System.out.println("[Somnium-DIAG] apply: bone right_arm NOT FOUND in baked model");
+        // Probe bone transforms only once per animation, not every frame
+        if (frameCountForCurrentAnim < 5) {
+            Optional<GeoBone> rightArm = bakedModel.getBone("right_arm");
+            if (rightArm.isPresent()) {
+                GeoBone b = rightArm.get();
+                System.out.println("[Somnium-DIAG] FRAME " + frameCountForCurrentAnim + ": right_arm rot=("
+                        + b.getRotX() + ", " + b.getRotY() + ", " + b.getRotZ() + ") pos=("
+                        + b.getPosX() + ", " + b.getPosY() + ", " + b.getPosZ() + ") partialTick=" + partialTick);
+            }
+            frameCountForCurrentAnim++;
         }
 
-        System.out.println("[Somnium-DIAG] apply: calling applyAllBones");
         applyAllBones(bakedModel, playerModel);
-        System.out.println("[Somnium-DIAG] apply: COMPLETE");
     }
 
     // ─── Bone application ────────────────────────────────────────────────────

@@ -98,145 +98,65 @@ public final class SomniumCastBoneApplicator {
             return;
         }
 
-        // ── ONE-SHOT PROBE: only logged once per new animation, not every frame ──
+        // ── First-frame announcement (diagnostic — will be removed once stable) ──
         if (!animatable.getActiveAnimation().equals(probedAnim)) {
             probedAnim = animatable.getActiveAnimation();
-            net.minecraft.resources.ResourceLocation animRes = model.getAnimationResource(animatable);
-            System.out.println("[Somnium-DIAG] PROBE: animation resource = " + animRes);
-
-            // 1) Is the animation file in the GeckoLib cache?
-            Object bakedAnims = software.bernie.geckolib.cache.GeckoLibCache.getBakedAnimations().get(animRes);
-            System.out.println("[Somnium-DIAG] PROBE: GeckoLibCache.getInstance().getBakedAnimations().get(animRes) = "
-                    + (bakedAnims == null ? "NULL — file not loaded by GeckoLib's resource listener" : bakedAnims.getClass().getSimpleName()));
-
-            // 2) Can we look up our specific animation name from the model?
-            try {
-                software.bernie.geckolib.core.animation.Animation anim =
-                        model.getAnimation(animatable, animatable.getActiveAnimation());
-                System.out.println("[Somnium-DIAG] PROBE: model.getAnimation('" + animatable.getActiveAnimation() + "') = "
-                        + (anim == null ? "NULL — name not found in animation file" :
-                        "FOUND length=" + anim.length() + " loopType=" + anim.loopType()
-                                + " boneCount=" + anim.boneAnimations().length));
-                if (anim != null && anim.boneAnimations() != null) {
-                    for (int i = 0; i < anim.boneAnimations().length; i++) {
-                        Object ba = anim.boneAnimations()[i];
-                        System.out.println("[Somnium-DIAG] PROBE:   bone[" + i + "] = " + ba);
-                    }
-                }
-            } catch (Throwable t) {
-                System.out.println("[Somnium-DIAG] PROBE: model.getAnimation THREW " + t);
-            }
-
-            // 3) List a few cache entries so we can see what keys ARE registered
-            System.out.println("[Somnium-DIAG] PROBE: GeckoLibCache has " + software.bernie.geckolib.cache.GeckoLibCache.getBakedAnimations().size() + " animation files cached. Sample keys:");
-            int shown = 0;
-            for (net.minecraft.resources.ResourceLocation k : software.bernie.geckolib.cache.GeckoLibCache.getBakedAnimations().keySet()) {
-                if (k.getNamespace().equals("romancedawn") || shown < 5) {
-                    System.out.println("[Somnium-DIAG] PROBE:   cached key = " + k);
-                    shown++;
-                }
-                if (shown >= 15) break;
-            }
+            System.out.println("[Somnium-DIAG] starting animation '" + animatable.getActiveAnimation()
+                    + "' on model '" + animatable.getActiveModelId() + "' for " + player.getName().getString());
         }
 
-        // ── Run the animation processor ──
+        // ── Drive the animation processor manually ──
+        //
+        // Why not use model.setCustomAnimations(...)?
+        //
+        // In GeckoLib 4.8, GeoModel#setCustomAnimations contains an early-return path that
+        // fires (silently, with no log) for animatables that are neither LivingEntity, Item,
+        // nor BlockEntity — i.e. plain GeoAnimatable implementations like ours. With that
+        // path taken, lastUpdateTime never advances, the AnimationProcessor's
+        // tickAnimation is never called, and the controller predicate is never invoked.
+        // (Diagnostic confirmation: a side-by-side test showed setCustomAnimations leaving
+        // manager state untouched while a direct tickAnimation call fired the predicate
+        // and produced correct first-keyframe bone values on the very next frame.)
+        //
+        // We replicate the small amount of setup setCustomAnimations would normally do
+        // (firstTickTime initialization, updatedAt for tick tracking) and then call
+        // tickAnimation directly. This is exactly what GeckoLib does internally for
+        // LivingEntity animatables; we're just bypassing the gate.
         AnimationState<SomniumCastAnimatable> state =
                 new AnimationState<>(animatable, 0f, 0f, partialTick, false);
 
-        // BEFORE setCustomAnimations: log all the gates that might early-return
-        if (frameCountForCurrentAnim < 3) {
-            try {
-                software.bernie.geckolib.core.animation.AnimatableManager<?> mgr =
-                        animatable.getAnimatableInstanceCache().getManagerForId(animatable.getInstanceId());
-                int boneCount = model.getAnimationProcessor().getRegisteredBones().size();
-                System.out.println("[Somnium-DIAG] PRE-SCA frame=" + frameCountForCurrentAnim
-                        + " bones=" + boneCount
-                        + " firstTickTime=" + mgr.getFirstTickTime()
-                        + " lastUpdateTime=" + mgr.getLastUpdateTime()
-                        + " controllers=" + mgr.getAnimationControllers().size()
-                        + " activeAnim='" + animatable.getActiveAnimation() + "'"
-                        + " currentTickRU=" + software.bernie.geckolib.util.RenderUtils.getCurrentTick());
-            } catch (Throwable t) {
-                System.out.println("[Somnium-DIAG] PRE-SCA probe threw: " + t);
-            }
-        }
-
         try {
-            model.setCustomAnimations(animatable, animatable.getInstanceId(), state);
+            software.bernie.geckolib.core.animation.AnimatableManager<SomniumCastAnimatable> mgr =
+                    animatable.getAnimatableInstanceCache().getManagerForId(animatable.getInstanceId());
+
+            double frameTime = software.bernie.geckolib.util.RenderUtils.getCurrentTick() + partialTick;
+
+            if (mgr.getFirstTickTime() == -1) {
+                mgr.startedAt(frameTime);
+            }
+            mgr.updatedAt(frameTime);
+
+            model.getAnimationProcessor().tickAnimation(
+                    animatable, model, mgr, frameTime, state, false);
         } catch (Exception e) {
-            System.out.println("[Somnium-DIAG] apply: setCustomAnimations THREW " + e);
-            LOGGER.error("[Somnium] CastAnimation: setCustomAnimations threw for animation '{}'.",
+            System.out.println("[Somnium-DIAG] apply: tickAnimation THREW " + e);
+            LOGGER.error("[Somnium] CastAnimation: tickAnimation threw for animation '{}'.",
                     animatable.getActiveAnimation());
             LOGGER.error("[Somnium] CastAnimation: exception detail", e);
             return;
         }
 
-        // AFTER setCustomAnimations: log the manager state again to see if it changed
-        if (frameCountForCurrentAnim < 3) {
-            try {
-                software.bernie.geckolib.core.animation.AnimatableManager<?> mgr =
-                        animatable.getAnimatableInstanceCache().getManagerForId(animatable.getInstanceId());
-                System.out.println("[Somnium-DIAG] POST-SCA frame=" + frameCountForCurrentAnim
-                        + " firstTickTime=" + mgr.getFirstTickTime()
-                        + " lastUpdateTime=" + mgr.getLastUpdateTime());
-            } catch (Throwable t) {
-                System.out.println("[Somnium-DIAG] POST-SCA probe threw: " + t);
-            }
-        }
-
-        // MANUAL BYPASS: if setCustomAnimations didn't fire the predicate, call tickAnimation directly.
-        // This sidesteps any early-return gates inside setCustomAnimations. If the predicate fires here,
-        // we know the problem is one of setCustomAnimations' internal guards.
-        if (frameCountForCurrentAnim == 0) {
-            try {
-                software.bernie.geckolib.core.animation.AnimatableManager<SomniumCastAnimatable> mgr =
-                        animatable.getAnimatableInstanceCache().getManagerForId(animatable.getInstanceId());
-                double seekTime = software.bernie.geckolib.util.RenderUtils.getCurrentTick() + partialTick;
-                if (mgr.getFirstTickTime() == -1) {
-                    mgr.startedAt(seekTime);
-                }
-                System.out.println("[Somnium-DIAG] MANUAL tickAnimation: calling directly with seekTime=" + seekTime);
-                model.getAnimationProcessor().tickAnimation(
-                        animatable, model, mgr, seekTime, state, false);
-                System.out.println("[Somnium-DIAG] MANUAL tickAnimation: returned");
-                // Re-read bone state after manual call
-                Optional<GeoBone> rightArmManual = bakedModel.getBone("right_arm");
-                if (rightArmManual.isPresent()) {
-                    GeoBone b = rightArmManual.get();
-                    System.out.println("[Somnium-DIAG] MANUAL post-call: right_arm rot=("
-                            + b.getRotX() + ", " + b.getRotY() + ", " + b.getRotZ() + ")");
-                }
-            } catch (Throwable t) {
-                System.out.println("[Somnium-DIAG] MANUAL tickAnimation THREW " + t);
-                t.printStackTrace();
-            }
-        }
-
-        // Probe bone transforms periodically across the animation lifetime
-        if (frameCountForCurrentAnim < 60 && (frameCountForCurrentAnim < 10 || frameCountForCurrentAnim % 10 == 0)) {
+        // Verification log — show bone progression at key frames so we can confirm motion
+        if (frameCountForCurrentAnim == 0 || frameCountForCurrentAnim == 5
+                || frameCountForCurrentAnim == 15 || frameCountForCurrentAnim == 30
+                || frameCountForCurrentAnim == 60) {
             Optional<GeoBone> rightArm = bakedModel.getBone("right_arm");
             if (rightArm.isPresent()) {
                 GeoBone b = rightArm.get();
-                System.out.println("[Somnium-DIAG] FRAME " + frameCountForCurrentAnim + ": right_arm rot=("
-                        + b.getRotX() + ", " + b.getRotY() + ", " + b.getRotZ() + ") pos=("
-                        + b.getPosX() + ", " + b.getPosY() + ", " + b.getPosZ() + ") partialTick=" + partialTick);
-            }
-
-            // Probe the controller state — what animation is currently playing, what state is it in?
-            try {
-                software.bernie.geckolib.core.animation.AnimatableManager<?> mgr =
-                        animatable.getAnimatableInstanceCache().getManagerForId(animatable.getInstanceId());
-                java.util.Map<String, ? extends software.bernie.geckolib.core.animation.AnimationController<?>> controllers =
-                        mgr.getAnimationControllers();
-                for (software.bernie.geckolib.core.animation.AnimationController<?> ctrl : controllers.values()) {
-                    Object currentAnim = ctrl.getCurrentAnimation();
-                    System.out.println("[Somnium-DIAG] FRAME " + frameCountForCurrentAnim + ": controller '" + ctrl.getName()
-                            + "' state=" + ctrl.getAnimationState()
-                            + " currentAnim=" + (currentAnim == null ? "null" : currentAnim.toString())
-                            + " hasFinished=" + ctrl.hasAnimationFinished());
-                }
-            } catch (Throwable t) {
-                System.out.println("[Somnium-DIAG] FRAME " + frameCountForCurrentAnim + ": controller probe THREW " + t);
+                System.out.println("[Somnium-DIAG] frame=" + frameCountForCurrentAnim
+                        + " right_arm rot=(" + b.getRotX() + ", " + b.getRotY() + ", " + b.getRotZ() + ")"
+                        + " pos=(" + b.getPosX() + ", " + b.getPosY() + ", " + b.getPosZ() + ")"
+                        + " scale=(" + b.getScaleX() + ", " + b.getScaleY() + ", " + b.getScaleZ() + ")");
             }
         }
         frameCountForCurrentAnim++;

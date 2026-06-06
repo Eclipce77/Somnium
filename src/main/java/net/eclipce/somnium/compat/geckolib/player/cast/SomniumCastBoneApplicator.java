@@ -196,26 +196,33 @@ public final class SomniumCastBoneApplicator {
         if (part == null) return;
 
         // ── Additive rotation (radians) ──
-        // GeckoLib returns the bone's absolute rotation for this animation frame.
-        // Because the default geo.json has all bones at (0, 0, 0) rest rotation,
-        // these values equal the delta from vanilla pose — exactly what additive
-        // blending requires.
+        //
+        // Coordinate conversion: Blockbench → vanilla ModelPart.
+        // The player model is rendered with PoseStack.scale(-1, -1, 1) (X and Y flipped),
+        // which inverts the direction of rotations around all three axes. The X-flip
+        // alone reverses Y and Z rotations; the Y-flip alone reverses X and Z rotations;
+        // combined, all three axes flip. Empirically: a Blockbench rotX of +π/2 (arm
+        // forward) maps to a vanilla xRot of -π/2 (arm forward) — same visual, opposite sign.
         float rx = bone.getRotX();
         float ry = bone.getRotY();
         float rz = bone.getRotZ();
 
-        if (rx != 0f) part.xRot += rx;
-        if (ry != 0f) part.yRot += ry;
-        if (rz != 0f) part.zRot += rz;
+        if (rx != 0f) part.xRot -= rx;
+        if (ry != 0f) part.yRot -= ry;
+        if (rz != 0f) part.zRot -= rz;
 
-        // ── Additive position (model units, Y-axis flipped) ──
-        // GeckoLib uses Y-up; vanilla PlayerModel uses Y-down.
+        // ── Additive position (model units) ──
+        //
+        // Coordinate conversion: Blockbench → vanilla ModelPart.
+        // Same scale(-1, -1, 1) flip as above — X and Y are mirrored, Z is unchanged.
+        // A Blockbench "move +X" (toward the model's right) becomes a vanilla "move -X"
+        // because the visual right side is at the negative X coordinate. Same for Y.
         float px = bone.getPosX();
         float py = bone.getPosY();
         float pz = bone.getPosZ();
 
-        if (px != 0f) part.x += px;
-        if (py != 0f) part.y -= py;   // flip Y to match vanilla coordinate system
+        if (px != 0f) part.x -= px;
+        if (py != 0f) part.y -= py;
         if (pz != 0f) part.z += pz;
 
         // ── Multiplicative scale (applied via PoseStack in ModelPartRenderMixin) ──

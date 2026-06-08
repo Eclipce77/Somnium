@@ -86,5 +86,16 @@ public final class SomniumBoneScaleMap {
         SCALE_MAP.clear();
     }
 
+    /**
+     * Removes the registered scale (if any) for a single {@link ModelPart}.
+     *
+     * <p>Used when an option flag (e.g. {@code showInFirstPerson = false}) requires us
+     * to skip the scale contribution for a specific part within the same frame the rest of
+     * the player keeps its scale. Idempotent — calling on a part with no entry is a no-op.</p>
+     */
+    public static void removeFor(ModelPart part) {
+        SCALE_MAP.remove(part);
+    }
+
     private SomniumBoneScaleMap() {}
 }

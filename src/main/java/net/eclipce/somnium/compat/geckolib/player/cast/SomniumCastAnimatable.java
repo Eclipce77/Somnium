@@ -35,6 +35,8 @@ public class SomniumCastAnimatable implements GeoAnimatable {
     private static final Map<UUID, String> QUEUED_ANIM = new ConcurrentHashMap<>();
     /** Queued model registry key keyed by player UUID. */
     private static final Map<UUID, String> QUEUED_MODEL = new ConcurrentHashMap<>();
+    /** Queued behaviour options keyed by player UUID. */
+    private static final Map<UUID, CastAnimationOptions> QUEUED_OPTIONS = new ConcurrentHashMap<>();
 
     private static final AtomicLong NEXT_INSTANCE_ID = new AtomicLong(0);
 
@@ -48,6 +50,16 @@ public class SomniumCastAnimatable implements GeoAnimatable {
     private String activeAnimation = null;
     @Nullable
     private String activeModelId = null;
+
+    /** Options for the currently-active animation. Resets to {@link CastAnimationOptions#DEFAULT} when no animation is active. */
+    private CastAnimationOptions currentOptions = CastAnimationOptions.DEFAULT;
+
+    /**
+     * Body parts currently hidden by us (via {@link CastAnimationOptions#hideBodyPart()} or
+     * {@link CastAnimationOptions#hideLayer()}). Tracked so the applicator can restore them
+     * when the option set changes, the animation ends, or another animation is queued.
+     */
+    private final java.util.Set<String> hiddenByUs = java.util.concurrent.ConcurrentHashMap.newKeySet();
 
     // Cached RawAnimation to avoid creating a new instance every render frame.
     // GeckoLib compares by reference when deciding whether to restart — a new
@@ -68,19 +80,35 @@ public class SomniumCastAnimatable implements GeoAnimatable {
     }
 
     /**
-     * Queues an animation to play for {@code uuid} on the next render frame.
+     * Returns the animatable for this UUID without creating it.
+     * Used by the per-frame applicator to avoid allocating an instance for every
+     * rendered player just to discover they have no animation.
+     */
+    @Nullable
+    public static SomniumCastAnimatable getOrNull(UUID uuid) {
+        return INSTANCES.get(uuid);
+    }
+
+    /**
+     * Queues an animation to play for {@code uuid} on the next render frame, with the
+     * default behaviour options ({@link CastAnimationOptions#DEFAULT}).
      * Called by {@link net.eclipce.somnium.network.PlayPlayerAnimationPacket} on the client main thread.
-     *
-     * @param uuid          the player to animate
-     * @param animationName the animation name from the animation.json
-     * @param modelId       the registry key of the {@link SomniumCastModel} to use
      */
     public static void setAnimation(UUID uuid, String animationName, String modelId) {
+        setAnimation(uuid, animationName, modelId, CastAnimationOptions.DEFAULT);
+    }
+
+    /**
+     * Queues an animation to play for {@code uuid} on the next render frame, with the
+     * given behaviour options.
+     */
+    public static void setAnimation(UUID uuid, String animationName, String modelId, CastAnimationOptions options) {
         System.out.println("[Somnium-DIAG] SomniumCastAnimatable.setAnimation: uuid=" + uuid
                 + " anim=" + animationName + " model=" + modelId);
         getOrCreate(uuid); // ensure instance exists
         QUEUED_ANIM.put(uuid, animationName);
         QUEUED_MODEL.put(uuid, modelId);
+        QUEUED_OPTIONS.put(uuid, options != null ? options : CastAnimationOptions.DEFAULT);
         System.out.println("[Somnium-DIAG] SomniumCastAnimatable.setAnimation: QUEUED_ANIM now contains "
                 + QUEUED_ANIM.size() + " entries; isActive(uuid)=" + isActive(uuid));
     }
@@ -100,6 +128,7 @@ public class SomniumCastAnimatable implements GeoAnimatable {
         INSTANCES.remove(uuid);
         QUEUED_ANIM.remove(uuid);
         QUEUED_MODEL.remove(uuid);
+        QUEUED_OPTIONS.remove(uuid);
     }
 
     /** Clears all cached state (e.g. on client level unload). */
@@ -107,6 +136,7 @@ public class SomniumCastAnimatable implements GeoAnimatable {
         INSTANCES.clear();
         QUEUED_ANIM.clear();
         QUEUED_MODEL.clear();
+        QUEUED_OPTIONS.clear();
     }
 
     // ─── Frame lifecycle — called by SomniumCastBoneApplicator ───────────────
@@ -122,6 +152,8 @@ public class SomniumCastAnimatable implements GeoAnimatable {
                     + "' to active for uuid=" + playerUuid);
             activeAnimation = queued;
             activeModelId = QUEUED_MODEL.remove(playerUuid);
+            CastAnimationOptions opt = QUEUED_OPTIONS.remove(playerUuid);
+            currentOptions = opt != null ? opt : CastAnimationOptions.DEFAULT;
             // Force the controller to restart on this new animation
             cache.getManagerForId(instanceId)
                     .getAnimationControllers()
@@ -134,13 +166,18 @@ public class SomniumCastAnimatable implements GeoAnimatable {
     public void onAnimationFinished() {
         activeAnimation = null;
         activeModelId = null;
+        currentOptions = CastAnimationOptions.DEFAULT;
+        // hiddenByUs is intentionally NOT cleared here — the applicator restores those parts
+        // on its next call by reading hiddenByUs and re-showing them.
     }
 
     // ─── Accessors ────────────────────────────────────────────────────────────
 
-    @Nullable public String getActiveAnimation() { return activeAnimation; }
-    @Nullable public String getActiveModelId()   { return activeModelId; }
-    public long getInstanceId()                  { return instanceId; }
+    @Nullable public String getActiveAnimation()         { return activeAnimation; }
+    @Nullable public String getActiveModelId()           { return activeModelId; }
+    public long             getInstanceId()              { return instanceId; }
+    public CastAnimationOptions getCurrentOptions()      { return currentOptions; }
+    public java.util.Set<String> getHiddenByUs()         { return hiddenByUs; }
 
     // ─── GeoAnimatable ────────────────────────────────────────────────────────
 

@@ -117,13 +117,17 @@ public final class SomniumAnimHelper {
     }
 
     /**
-     * Triggers a GeckoLib cast animation on a player's vanilla model.
+     * Triggers a GeckoLib cast animation on a player's vanilla model, with default behaviour
+     * (vanilla animations blend additively on every body part, no look tracking, no hidden
+     * layers, no first-person render). Equivalent to calling
+     * {@link #triggerCastAnimation(net.minecraft.server.level.ServerPlayer, String, net.minecraft.resources.ResourceLocation, net.eclipce.somnium.compat.geckolib.player.cast.CastAnimationOptions)}
+     * with {@link net.eclipce.somnium.compat.geckolib.player.cast.CastAnimationOptions#DEFAULT}.
      *
      * <p>Sends a {@link net.eclipce.somnium.network.PlayPlayerAnimationPacket} to all
      * clients tracking {@code player} (including the player themselves). Client-side, the
-     * {@link net.eclipce.somnium.compat.geckolib.mixin.PlayerModelSetupMixin} picks
-     * up the animation and applies bone-level transforms additively on top of the vanilla
-     * model pose, so locomotion animations and armor layers are unaffected.</p>
+     * {@link net.eclipce.somnium.compat.geckolib.mixin.PlayerModelSetupMixin} picks up the
+     * animation and applies bone-level transforms additively on top of the vanilla model
+     * pose, so locomotion animations and armor layers are unaffected.</p>
      *
      * <p>Only bones explicitly keyframed in the animation are altered. Bones not present
      * in the animation contribute a zero delta and leave vanilla behaviour unchanged.</p>
@@ -142,16 +146,52 @@ public final class SomniumAnimHelper {
     public static void triggerCastAnimation(net.minecraft.server.level.ServerPlayer player,
                                             String animationName,
                                             net.minecraft.resources.ResourceLocation modelId) {
+        triggerCastAnimation(player, animationName, modelId,
+                net.eclipce.somnium.compat.geckolib.player.cast.CastAnimationOptions.DEFAULT);
+    }
+
+    /**
+     * Triggers a GeckoLib cast animation on a player's vanilla model with the given
+     * per-cast {@link net.eclipce.somnium.compat.geckolib.player.cast.CastAnimationOptions}.
+     *
+     * <p>The options travel with the packet to every tracking client and live for the
+     * duration of this single animation; the next call to {@code triggerCastAnimation}
+     * replaces them. Use the builder on {@code CastAnimationOptions} to toggle vanilla
+     * suppression on specific parts, look-direction tracking, skin/layer hiding, and
+     * first-person visibility — see that class's Javadoc for the full menu.</p>
+     *
+     * <p>Sample call:</p>
+     * <pre>{@code
+     * SomniumAnimHelper.triggerCastAnimation(player, "pistol_extend", GOMU_CAST_MODEL,
+     *     CastAnimationOptions.builder()
+     *         .suppressVanillaAnimOn("right_arm")
+     *         .followPlayerLook(true)
+     *         .hideLayer("right_sleeve")
+     *         .showInFirstPerson(true)
+     *         .build());
+     * }</pre>
+     *
+     * @param options never {@code null}; pass
+     *                {@link net.eclipce.somnium.compat.geckolib.player.cast.CastAnimationOptions#DEFAULT}
+     *                if you only need vanilla blending
+     */
+    public static void triggerCastAnimation(net.minecraft.server.level.ServerPlayer player,
+                                            String animationName,
+                                            net.minecraft.resources.ResourceLocation modelId,
+                                            net.eclipce.somnium.compat.geckolib.player.cast.CastAnimationOptions options) {
         System.out.println("[Somnium-DIAG] triggerCastAnimation: player=" + player.getName().getString()
                 + " uuid=" + player.getUUID() + " anim=" + animationName + " model=" + modelId);
         if (animationName == null || modelId == null) {
             System.out.println("[Somnium-DIAG] triggerCastAnimation: ABORTED — null arg");
             return;
         }
+        if (options == null) {
+            options = net.eclipce.somnium.compat.geckolib.player.cast.CastAnimationOptions.DEFAULT;
+        }
         System.out.println("[Somnium-DIAG] triggerCastAnimation: sending PlayPlayerAnimationPacket via sendToTracking");
         net.eclipce.somnium.network.SomniumNetwork.sendToTracking(
                 new net.eclipce.somnium.network.PlayPlayerAnimationPacket(
-                        player.getUUID(), animationName, modelId.toString()),
+                        player.getUUID(), animationName, modelId.toString(), options),
                 player);
         System.out.println("[Somnium-DIAG] triggerCastAnimation: sendToTracking returned");
     }

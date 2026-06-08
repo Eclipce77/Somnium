@@ -60,12 +60,21 @@ public final class SomniumCastBoneApplicator {
 
         SomniumCastAnimatable animatable = SomniumCastAnimatable.getOrCreate(player.getUUID());
 
+        // ── Restore previously-hidden parts FIRST ──
+        // Runs every frame regardless of whether an animation is active. If the previous
+        // animation hid some parts and has since ended (or was replaced with one whose
+        // hide-set differs), this re-shows everything we had hidden. The current frame's
+        // hide-set is reapplied below after applyAllBones.
+        restorePreviouslyHidden(playerModel, animatable);
+
         // Consume any packet-queued animation before checking isActive
         animatable.consumeQueue();
 
         if (animatable.getActiveAnimation() == null) {
             return;
         }
+
+        CastAnimationOptions options = animatable.getCurrentOptions();
 
         // Reset frame counter when starting a new animation
         if (!animatable.getActiveAnimation().equals(probedAnim)) {
@@ -170,7 +179,47 @@ public final class SomniumCastBoneApplicator {
         }
         frameCountForCurrentAnim++;
 
-        applyAllBones(bakedModel, playerModel);
+        // ── suppressVanillaAnimOn ──
+        // For each configured part, reset to its initial (rest) pose BEFORE we apply
+        // animation deltas. Vanilla setupAnim already ran by the time we get here, so the
+        // part holds the vanilla walk-swing / attack / look pose; resetPose() wipes that
+        // to the part's rig-default. Our additive deltas then sit on rest, not on vanilla.
+        for (String partName : options.suppressVanillaAnimOn()) {
+            ModelPart part = SomniumPlayerBoneMap.getPart(playerModel, partName);
+            if (part != null) part.resetPose();
+        }
+
+        // ── Capture vanilla head pose BEFORE applyAllBones mutates the head ModelPart ──
+        // Used by followPlayerLook below. We need pitch (head.xRot) and yaw delta
+        // (head.yRot, which vanilla setupAnim has already set to netHeadYaw in radians)
+        // as the source values to add onto animated arm/leg pairs.
+        float vanillaHeadPitch = 0f;
+        float vanillaHeadYaw   = 0f;
+        if (options.followPlayerLook()) {
+            ModelPart head = SomniumPlayerBoneMap.getPart(playerModel, "head");
+            if (head != null) {
+                vanillaHeadPitch = head.xRot;
+                vanillaHeadYaw   = head.yRot;
+            }
+        }
+
+        // Apply bones — track which received a non-zero delta so followPlayerLook below
+        // can scope itself to only animated parts (per the API contract).
+        java.util.Set<String> animatedBones = new java.util.HashSet<>();
+        applyAllBones(bakedModel, playerModel, animatedBones);
+
+        // ── followPlayerLook ──
+        // Add the head's pitch and yaw delta to animated arms and legs, so the punch /
+        // kick / projectile motion angles with the player's view direction.
+        if (options.followPlayerLook()) {
+            applyFollowLook(playerModel, animatedBones, vanillaHeadPitch, vanillaHeadYaw);
+        }
+
+        // ── hideBodyPart / hideLayer ──
+        // Set the requested ModelParts invisible and record them in hiddenByUs so that
+        // restorePreviouslyHidden (at the top of the next frame's apply()) can re-show
+        // them when the option set changes or the animation ends.
+        applyHideOptions(playerModel, options, animatable);
     }
 
     // ─── Bone application ────────────────────────────────────────────────────
@@ -201,24 +250,27 @@ public final class SomniumCastBoneApplicator {
      * leaves of the bone tree and their offsets translate cleanly to ModelPart
      * pivot offsets.</p>
      */
-    private static void applyAllBones(BakedGeoModel bakedModel, PlayerModel<?> playerModel) {
-        applyBoneIfPresent(bakedModel, playerModel, "body");
-        applyBoneIfPresent(bakedModel, playerModel, "head");
-        applyBoneIfPresent(bakedModel, playerModel, "hat");
-        applyBoneIfPresent(bakedModel, playerModel, "jacket");
-        applyBoneIfPresent(bakedModel, playerModel, "right_arm");
-        applyBoneIfPresent(bakedModel, playerModel, "right_sleeve");
-        applyBoneIfPresent(bakedModel, playerModel, "left_arm");
-        applyBoneIfPresent(bakedModel, playerModel, "left_sleeve");
-        applyBoneIfPresent(bakedModel, playerModel, "right_leg");
-        applyBoneIfPresent(bakedModel, playerModel, "right_pants");
-        applyBoneIfPresent(bakedModel, playerModel, "left_leg");
-        applyBoneIfPresent(bakedModel, playerModel, "left_pants");
+    private static void applyAllBones(BakedGeoModel bakedModel,
+                                      PlayerModel<?> playerModel,
+                                      java.util.Set<String> animatedBones) {
+        applyBoneIfPresent(bakedModel, playerModel, "body",         animatedBones);
+        applyBoneIfPresent(bakedModel, playerModel, "head",         animatedBones);
+        applyBoneIfPresent(bakedModel, playerModel, "hat",          animatedBones);
+        applyBoneIfPresent(bakedModel, playerModel, "jacket",       animatedBones);
+        applyBoneIfPresent(bakedModel, playerModel, "right_arm",    animatedBones);
+        applyBoneIfPresent(bakedModel, playerModel, "right_sleeve", animatedBones);
+        applyBoneIfPresent(bakedModel, playerModel, "left_arm",     animatedBones);
+        applyBoneIfPresent(bakedModel, playerModel, "left_sleeve",  animatedBones);
+        applyBoneIfPresent(bakedModel, playerModel, "right_leg",    animatedBones);
+        applyBoneIfPresent(bakedModel, playerModel, "right_pants",  animatedBones);
+        applyBoneIfPresent(bakedModel, playerModel, "left_leg",     animatedBones);
+        applyBoneIfPresent(bakedModel, playerModel, "left_pants",   animatedBones);
     }
 
     private static void applyBoneIfPresent(BakedGeoModel baked,
                                            PlayerModel<?> playerModel,
-                                           String boneName) {
+                                           String boneName,
+                                           java.util.Set<String> animatedBones) {
         Optional<GeoBone> opt = baked.getBone(boneName);
         if (opt.isEmpty()) return;
 
@@ -227,6 +279,8 @@ public final class SomniumCastBoneApplicator {
 
         ModelPart part = SomniumPlayerBoneMap.getPart(playerModel, boneName);
         if (part == null) return;
+
+        boolean anyTransform = false;
 
         // ── Additive rotation (radians) ──
         //
@@ -240,9 +294,9 @@ public final class SomniumCastBoneApplicator {
         float ry = bone.getRotY();
         float rz = bone.getRotZ();
 
-        if (rx != 0f) part.xRot -= rx;
-        if (ry != 0f) part.yRot -= ry;
-        if (rz != 0f) part.zRot -= rz;
+        if (rx != 0f) { part.xRot -= rx; anyTransform = true; }
+        if (ry != 0f) { part.yRot -= ry; anyTransform = true; }
+        if (rz != 0f) { part.zRot -= rz; anyTransform = true; }
 
         // ── Additive position (model units) ──
         //
@@ -259,9 +313,9 @@ public final class SomniumCastBoneApplicator {
             float py = bone.getPosY();
             float pz = bone.getPosZ();
 
-            if (px != 0f) part.x -= px;
-            if (py != 0f) part.y -= py;
-            if (pz != 0f) part.z += pz;
+            if (px != 0f) { part.x -= px; anyTransform = true; }
+            if (py != 0f) { part.y -= py; anyTransform = true; }
+            if (pz != 0f) { part.z += pz; anyTransform = true; }
         }
 
         // ── Multiplicative scale (applied via PoseStack in ModelPartRenderMixin) ──
@@ -274,6 +328,145 @@ public final class SomniumCastBoneApplicator {
         float sz = bone.getScaleZ();
         if (sx != 1f || sy != 1f || sz != 1f) {
             SomniumBoneScaleMap.setScale(part, sx, sy, sz);
+            anyTransform = true;
+        }
+
+        if (anyTransform) animatedBones.add(boneName);
+    }
+
+    // ─── Option-driven helpers ───────────────────────────────────────────────
+
+    /**
+     * Restores every part previously hidden by us to {@code visible = true}.
+     * Called unconditionally at the top of every {@link #apply} so visibility
+     * self-heals as soon as an animation ends or its hide-set changes.
+     */
+    private static void restorePreviouslyHidden(PlayerModel<?> playerModel, SomniumCastAnimatable animatable) {
+        java.util.Set<String> hidden = animatable.getHiddenByUs();
+        if (hidden.isEmpty()) return;
+        for (String name : hidden) {
+            ModelPart part = SomniumPlayerBoneMap.getPart(playerModel, name);
+            if (part != null) part.visible = true;
+        }
+        hidden.clear();
+    }
+
+    /**
+     * Applies the current frame's hide-set. The two hide channels (body and layer) are
+     * functionally identical — both set {@link ModelPart#visible} false — and are kept
+     * separate purely to give the API surface clarity about what kind of part is targeted.
+     */
+    private static void applyHideOptions(PlayerModel<?> playerModel,
+                                         CastAnimationOptions options,
+                                         SomniumCastAnimatable animatable) {
+        java.util.Set<String> hidden = animatable.getHiddenByUs();
+        for (String name : options.hideBodyPart()) {
+            ModelPart part = SomniumPlayerBoneMap.getPart(playerModel, name);
+            if (part != null) {
+                part.visible = false;
+                hidden.add(name);
+            }
+        }
+        for (String name : options.hideLayer()) {
+            ModelPart part = SomniumPlayerBoneMap.getPart(playerModel, name);
+            if (part != null) {
+                part.visible = false;
+                hidden.add(name);
+            }
+        }
+    }
+
+    /**
+     * Arm and leg layer pairs for {@link #applyFollowLook}. When any member of a group
+     * has a non-zero animated transform, all members of the group receive the look
+     * influence so the skin layer stays glued to its base part (otherwise a follow-look
+     * rotation applied only to {@code right_arm} would leave {@code right_sleeve}
+     * trailing behind at the vanilla pose).
+     */
+    private static final java.util.List<java.util.List<String>> FOLLOW_LOOK_GROUPS = java.util.List.of(
+            java.util.List.of("right_arm",  "right_sleeve"),
+            java.util.List.of("left_arm",   "left_sleeve"),
+            java.util.List.of("right_leg",  "right_pants"),
+            java.util.List.of("left_leg",   "left_pants")
+    );
+
+    /**
+     * Adds the vanilla head pitch and yaw delta onto every animated arm/leg group.
+     * Head and body parts are deliberately excluded — the head already follows look in
+     * vanilla, and the body rotating to follow the head would be visually jarring.
+     */
+    private static void applyFollowLook(PlayerModel<?> playerModel,
+                                        java.util.Set<String> animatedBones,
+                                        float pitch,
+                                        float yaw) {
+        for (java.util.List<String> group : FOLLOW_LOOK_GROUPS) {
+            boolean groupAnimated = false;
+            for (String name : group) {
+                if (animatedBones.contains(name)) { groupAnimated = true; break; }
+            }
+            if (!groupAnimated) continue;
+            for (String name : group) {
+                ModelPart part = SomniumPlayerBoneMap.getPart(playerModel, name);
+                if (part != null) {
+                    part.xRot += pitch;
+                    part.yRot += yaw;
+                }
+            }
+        }
+    }
+
+    // ─── First-person re-apply ───────────────────────────────────────────────
+
+    /**
+     * Re-applies the cast animation's arm/sleeve rotation after vanilla
+     * {@code PlayerRenderer#renderHand} has wiped {@code arm.xRot} and {@code sleeve.xRot}
+     * to {@code 0.0F}.
+     *
+     * <p>Called from {@code PlayerRendererFirstPersonMixin} before the
+     * {@code arm.render(...)} / {@code sleeve.render(...)} calls inside {@code renderHand}.
+     * Our setupAnim mixin already ran during {@code renderHand}'s own {@code setupAnim}
+     * call, so all other channels ({@code yRot}, {@code zRot}, {@code x}, {@code y},
+     * {@code z}, scale) survive vanilla's reset — only the explicit {@code xRot = 0.0F}
+     * assignments need to be undone here.</p>
+     *
+     * <p>No coord-conversion sign juggling is needed at the call site because the
+     * sign flip is identical to the third-person application: a Blockbench
+     * {@code rotX = +π/2} maps to a vanilla {@code xRot = -π/2}, so we write
+     * {@code -bone.getRotX()} directly.</p>
+     *
+     * @param animatable the active animatable for the local player
+     * @param arm        the {@link ModelPart} vanilla {@code renderHand} is about to render
+     * @param sleeve     the {@link ModelPart} vanilla {@code renderHand} is about to render
+     * @param rightHand  {@code true} for the right arm/sleeve, {@code false} for left
+     */
+    public static void reapplyArmRotation(SomniumCastAnimatable animatable,
+                                          ModelPart arm,
+                                          ModelPart sleeve,
+                                          boolean rightHand) {
+        if (animatable == null || animatable.getActiveAnimation() == null) return;
+
+        SomniumCastModel model = CastAnimationModelRegistry.get(animatable.getActiveModelId());
+        if (model == null) return;
+
+        BakedGeoModel baked;
+        try {
+            baked = model.getBakedModel(model.getModelResource(animatable));
+        } catch (Exception e) {
+            return;
+        }
+        if (baked == null) return;
+
+        String armBone    = rightHand ? "right_arm"    : "left_arm";
+        String sleeveBone = rightHand ? "right_sleeve" : "left_sleeve";
+
+        Optional<GeoBone> armOpt = baked.getBone(armBone);
+        if (armOpt.isPresent() && !armOpt.get().isHidden()) {
+            // SET (not add) — vanilla just wrote 0.0F so the field has no useful prior value
+            arm.xRot = -armOpt.get().getRotX();
+        }
+        Optional<GeoBone> sleeveOpt = baked.getBone(sleeveBone);
+        if (sleeveOpt.isPresent() && !sleeveOpt.get().isHidden()) {
+            sleeve.xRot = -sleeveOpt.get().getRotX();
         }
     }
 

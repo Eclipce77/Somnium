@@ -6,7 +6,8 @@
   "refmap": "mixins.somnium.refmap.json",
   "client": [
     "PlayerModelSetupMixin",
-    "ModelPartRenderMixin"
+    "ModelPartRenderMixin",
+    "PlayerRendererFirstPersonMixin"
   ],
   "injectors": {
     "defaultRequire": 1

@@ -47,7 +47,22 @@ public abstract class PlayerModelSetupMixin {
         // Only apply to player entities
         if (!(entity instanceof Player player)) return;
         if (!GeckoLibCompat.isLoaded()) return;
-        if (!SomniumCastAnimatable.isActive(player.getUUID())) return;
+
+        // Skip entirely if this player has never been involved with the cast system
+        // (no animatable instance exists). Otherwise we must call apply() even when no
+        // animation is currently active, so it can restore parts that a prior animation
+        // hid via CastAnimationOptions#hideBodyPart / #hideLayer.
+        SomniumCastAnimatable animatable = SomniumCastAnimatable.getOrNull(player.getUUID());
+        if (animatable == null) {
+            // Fast path: also accept a freshly queued animation that hasn't materialised
+            // an instance yet (setAnimation() always calls getOrCreate first, so this
+            // branch is purely defensive).
+            if (!SomniumCastAnimatable.isActive(player.getUUID())) return;
+        } else if (animatable.getActiveAnimation() == null
+                && animatable.getHiddenByUs().isEmpty()
+                && !SomniumCastAnimatable.isActive(player.getUUID())) {
+            return;
+        }
 
         // Only apply when this HumanoidModel is actually a PlayerModel
         if (!((Object) this instanceof PlayerModel)) return;

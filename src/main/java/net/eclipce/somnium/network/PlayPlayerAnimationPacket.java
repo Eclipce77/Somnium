@@ -1,5 +1,6 @@
 package net.eclipce.somnium.network;
 
+import net.eclipce.somnium.compat.geckolib.player.cast.CastAnimationOptions;
 import net.eclipce.somnium.compat.geckolib.player.cast.SomniumCastAnimatable;
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraftforge.network.NetworkEvent;
@@ -8,16 +9,19 @@ import java.util.UUID;
 import java.util.function.Supplier;
 
 /**
- * Server → Client packet that triggers a GeckoLib cast animation on a player.
+ * Server → Client packet that triggers a GeckoLib cast animation on a player, optionally
+ * with per-cast {@link CastAnimationOptions}.
  *
  * <p>Sent via {@link net.eclipce.somnium.compat.geckolib.animation.SomniumAnimHelper#triggerCastAnimation},
- * which broadcasts to all players tracking the target (including themselves).
- * On arrival, the client-side {@link SomniumCastAnimatable} stores the animation
- * by UUID. The next render frame the Mixin picks it up and applies bone transforms
- * onto the vanilla player model additively.</p>
+ * which broadcasts to all players tracking the target (including themselves). On arrival,
+ * the client-side {@link SomniumCastAnimatable} stores the animation, model, and options
+ * by UUID. The next render frame the Mixin picks them up and applies bone transforms onto
+ * the vanilla player model additively (modulated by the options).</p>
  *
- * <p>Includes a model registry key so the correct {@link net.eclipce.somnium.compat.geckolib.player.cast.SomniumCastModel}
- * is resolved client-side.</p>
+ * <h3>Wire format</h3>
+ * <p>UUID, animation name (UTF), model registry key (UTF), then the serialized
+ * {@link CastAnimationOptions}. Always include options; pass {@link CastAnimationOptions#DEFAULT}
+ * when no overrides are needed.</p>
  */
 public class PlayPlayerAnimationPacket {
 
@@ -26,23 +30,44 @@ public class PlayPlayerAnimationPacket {
     private final String animationName;
     /** Registry key of the SomniumCastModel to use — e.g. "mymod:fire_cast" */
     private final String modelId;
+    /** Per-cast behaviour options. Never {@code null}. */
+    private final CastAnimationOptions options;
 
-    public PlayPlayerAnimationPacket(UUID playerUuid, String animationName, String modelId) {
+    /**
+     * Full constructor.
+     *
+     * @param options never {@code null}; pass {@link CastAnimationOptions#DEFAULT} for no overrides
+     */
+    public PlayPlayerAnimationPacket(UUID playerUuid, String animationName, String modelId, CastAnimationOptions options) {
         this.playerUuid = playerUuid;
         this.animationName = animationName;
         this.modelId = modelId;
+        this.options = options != null ? options : CastAnimationOptions.DEFAULT;
+    }
+
+    /**
+     * Back-compatible constructor that defaults options to {@link CastAnimationOptions#DEFAULT}.
+     * Existing call sites continue to compile and behave identically to before the options API.
+     */
+    public PlayPlayerAnimationPacket(UUID playerUuid, String animationName, String modelId) {
+        this(playerUuid, animationName, modelId, CastAnimationOptions.DEFAULT);
     }
 
     // ─── Codec ───────────────────────────────────────────────────────────────
 
     public static PlayPlayerAnimationPacket decode(FriendlyByteBuf buf) {
-        return new PlayPlayerAnimationPacket(buf.readUUID(), buf.readUtf(), buf.readUtf());
+        UUID uuid = buf.readUUID();
+        String anim = buf.readUtf();
+        String model = buf.readUtf();
+        CastAnimationOptions opts = CastAnimationOptions.read(buf);
+        return new PlayPlayerAnimationPacket(uuid, anim, model, opts);
     }
 
     public void encode(FriendlyByteBuf buf) {
         buf.writeUUID(playerUuid);
         buf.writeUtf(animationName);
         buf.writeUtf(modelId);
+        options.write(buf);
     }
 
     // ─── Handler (runs on client main thread) ────────────────────────────────
@@ -53,7 +78,7 @@ public class PlayPlayerAnimationPacket {
                 + " direction=" + ctx.get().getDirection());
         ctx.get().enqueueWork(() -> {
             System.out.println("[Somnium-DIAG] PlayPlayerAnimationPacket.handle: enqueued work running on main thread");
-            SomniumCastAnimatable.setAnimation(playerUuid, animationName, modelId);
+            SomniumCastAnimatable.setAnimation(playerUuid, animationName, modelId, options);
         });
         ctx.get().setPacketHandled(true);
     }

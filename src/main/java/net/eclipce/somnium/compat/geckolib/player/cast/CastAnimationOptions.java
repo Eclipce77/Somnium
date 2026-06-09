@@ -2,7 +2,6 @@ package net.eclipce.somnium.compat.geckolib.player.cast;
 
 import net.minecraft.network.FriendlyByteBuf;
 
-import java.util.Collections;
 import java.util.HashSet;
 import java.util.Set;
 
@@ -157,12 +156,30 @@ public final class CastAnimationOptions {
         private Builder() {}
 
         /**
+         * Splits each input on commas and trims whitespace, accepting both varargs and
+         * a single comma-joined string. {@code "right_sleeve, left_sleeve"} and
+         * {@code "right_sleeve", "left_sleeve"} produce the same result. Empty segments
+         * are ignored. Used by every set-typed builder method below; vanilla part names
+         * never contain commas, so this is unambiguous.
+         */
+        private static void addSplit(Set<String> into, String[] parts) {
+            for (String raw : parts) {
+                if (raw == null) continue;
+                for (String piece : raw.split(",")) {
+                    String trimmed = piece.trim();
+                    if (!trimmed.isEmpty()) into.add(trimmed);
+                }
+            }
+        }
+
+        /**
          * Adds one or more parts whose vanilla animation should be suppressed for the
          * duration of this cast. Calling this multiple times accumulates parts (does not
-         * replace).
+         * replace). Accepts both varargs ({@code "right_arm", "left_arm"}) and a single
+         * comma-joined string ({@code "right_arm, left_arm"}).
          */
         public Builder suppressVanillaAnimOn(String... parts) {
-            Collections.addAll(this.suppressVanillaAnimOn, parts);
+            addSplit(this.suppressVanillaAnimOn, parts);
             return this;
         }
 
@@ -171,15 +188,21 @@ public final class CastAnimationOptions {
             return this;
         }
 
-        /** Adds one or more base body parts to hide. Accumulates across calls. */
+        /**
+         * Adds one or more base body parts to hide. Accumulates across calls. Accepts
+         * both varargs and a single comma-joined string.
+         */
         public Builder hideBodyPart(String... parts) {
-            Collections.addAll(this.hideBodyPart, parts);
+            addSplit(this.hideBodyPart, parts);
             return this;
         }
 
-        /** Adds one or more skin overlay parts to hide. Accumulates across calls. */
+        /**
+         * Adds one or more skin overlay parts to hide. Accumulates across calls. Accepts
+         * both varargs and a single comma-joined string.
+         */
         public Builder hideLayer(String... parts) {
-            Collections.addAll(this.hideLayer, parts);
+            addSplit(this.hideLayer, parts);
             return this;
         }
 

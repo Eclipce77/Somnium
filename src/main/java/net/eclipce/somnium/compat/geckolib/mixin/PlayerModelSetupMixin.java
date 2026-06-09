@@ -75,5 +75,20 @@ public abstract class PlayerModelSetupMixin {
                 + player.getName().getString() + " uuid=" + player.getUUID()
                 + " modelClass=" + self.getClass().getSimpleName());
         SomniumCastBoneApplicator.apply(player, self, partialTick);
+
+        // ── First-person own-player head/hat hide ──
+        // When SomniumFirstPersonRenderer is re-rendering the local player from inside
+        // the FP camera, we need head and hat invisible so the player doesn't see their
+        // own face / hat brim filling the screen. This MUST happen here in setupAnim
+        // rather than in the FP renderer itself: PlayerRenderer.render's very first call
+        // is setModelProperties() which does model.setAllVisible(true), wiping any
+        // visibility we set before render. setupAnim runs AFTER setModelProperties, and
+        // PlayerModel's post-super copyFrom calls don't touch the visible flag, so a flag
+        // set here survives intact through the rest of the render.
+        if (net.eclipce.somnium.compat.geckolib.player.cast.SomniumFirstPersonRenderer
+                .RENDERING_OWN_PLAYER_IN_FIRST_PERSON.get()) {
+            self.head.visible = false;
+            self.hat.visible  = false;
+        }
     }
 }

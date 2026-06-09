@@ -4,7 +4,6 @@ import com.mojang.blaze3d.vertex.PoseStack;
 import net.minecraft.client.CameraType;
 import net.minecraft.client.Camera;
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.model.PlayerModel;
 import net.minecraft.client.player.AbstractClientPlayer;
 import net.minecraft.client.player.LocalPlayer;
 import net.minecraft.client.renderer.entity.EntityRenderer;
@@ -72,6 +71,23 @@ import net.eclipce.somnium.compat.geckolib.mixin.PlayerModelSetupMixin;
 public final class SomniumFirstPersonRenderer {
 
     /**
+     * Set to {@code true} for the duration of the FP re-render call below. Read by
+     * {@link net.eclipce.somnium.compat.geckolib.mixin.PlayerModelSetupMixin} so it can
+     * force {@code head.visible} and {@code hat.visible} to {@code false} <em>after</em>
+     * {@code PlayerRenderer.setModelProperties} has wiped them back to {@code true}.
+     *
+     * <p>This is the cleanest place to flip those flags: setModelProperties runs at the
+     * very start of {@code PlayerRenderer.render} and calls {@code setAllVisible(true)},
+     * so any visibility set <em>before</em> render is lost. The next mutable hook in the
+     * pipeline is the model's {@code setupAnim} method — which our mixin already targets
+     * for the cast-animation bone application. By reading this thread-local from inside
+     * that mixin we hide head/hat after vanilla has set them and before the geometry
+     * is sent to the buffer.</p>
+     */
+    public static final ThreadLocal<Boolean> RENDERING_OWN_PLAYER_IN_FIRST_PERSON =
+            ThreadLocal.withInitial(() -> Boolean.FALSE);
+
+    /**
      * Renders the local player at their world position after the level's entities
      * are drawn. Only runs in first-person camera mode with an active cast animation
      * that has {@code showInFirstPerson=true}.
@@ -116,14 +132,12 @@ public final class SomniumFirstPersonRenderer {
         poseStack.pushPose();
         poseStack.translate(px - cameraPos.x, py - cameraPos.y, pz - cameraPos.z);
 
-        // Hide head and hat for the duration of this render so the player doesn't
-        // see the inside of their own skull. The hat copyFrom inside PlayerModel
-        // doesn't touch visible, so a one-shot toggle around the render call is safe.
-        PlayerModel<?> model = playerRenderer.getModel();
-        boolean origHeadVisible = model.head.visible;
-        boolean origHatVisible  = model.hat.visible;
-        model.head.visible = false;
-        model.hat.visible  = false;
+        // Mark this thread as rendering the local player in FP. The setupAnim mixin
+        // reads this and force-hides head/hat after vanilla has set them visible — which
+        // is the only stable window in the render to do it. We CANNOT just set
+        // model.head.visible=false here: PlayerRenderer.render's very first line is
+        // setModelProperties() which calls setAllVisible(true), wiping any pre-set value.
+        RENDERING_OWN_PLAYER_IN_FIRST_PERSON.set(Boolean.TRUE);
 
         try {
             // BufferSource specifically (not the abstract MultiBufferSource) so endBatch()
@@ -138,8 +152,7 @@ public final class SomniumFirstPersonRenderer {
             // off-order against the world).
             buffers.endBatch();
         } finally {
-            model.head.visible = origHeadVisible;
-            model.hat.visible  = origHatVisible;
+            RENDERING_OWN_PLAYER_IN_FIRST_PERSON.set(Boolean.FALSE);
             poseStack.popPose();
         }
     }

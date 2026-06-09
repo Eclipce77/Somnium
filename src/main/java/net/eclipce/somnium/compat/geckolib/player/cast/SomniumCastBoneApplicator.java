@@ -1,7 +1,6 @@
 package net.eclipce.somnium.compat.geckolib.player.cast;
 
 import com.mojang.logging.LogUtils;
-import net.minecraft.client.Minecraft;
 import net.minecraft.client.model.PlayerModel;
 import net.minecraft.client.model.geom.ModelPart;
 import net.minecraft.world.entity.player.Player;
@@ -148,6 +147,29 @@ public final class SomniumCastBoneApplicator {
 
             model.getAnimationProcessor().tickAnimation(
                     animatable, model, mgr, frameTime, state, false);
+
+            // ── Bug 2 fix: auto-clear when the animation's duration has elapsed ──
+            // The controller's predicate uses setAndContinue every frame; without this
+            // check, currentOptions (including suppressVanillaAnimOn) stays active forever
+            // on the held last frame, and vanilla locomotion never resumes on suppressed
+            // parts. hasAnimationFinished returns true once adjustedTick >= length, which
+            // fires for both PLAY_ONCE animations (after they play through) and HOLD
+            // animations (after their authored duration elapses).
+            //
+            // Tradeoff: HOLD animations lose their held visual at duration. Callers who
+            // need a pose to persist past the animation's length should chain to a
+            // separate animation rather than rely on hold_on_last_frame combined with
+            // suppressVanillaAnimOn.
+            software.bernie.geckolib.core.animation.AnimationController<SomniumCastAnimatable> controller =
+                    mgr.getAnimationControllers().get("somnium_cast");
+            if (controller != null && controller.hasAnimationFinished()) {
+                System.out.println("[Somnium-DIAG] apply: controller.hasAnimationFinished() — clearing state");
+                animatable.onAnimationFinished();
+                // Skip the remaining apply steps; next frame's restorePreviouslyHidden
+                // will re-show any layers/parts we hid, and the early-return at the top
+                // of apply() will catch the now-null activeAnimation.
+                return;
+            }
         } catch (Exception e) {
             System.out.println("[Somnium-DIAG] apply: tickAnimation THREW " + e);
             LOGGER.error("[Somnium] CastAnimation: tickAnimation threw for animation '{}'.",
@@ -359,9 +381,27 @@ public final class SomniumCastBoneApplicator {
     private static void applyHideOptions(PlayerModel<?> playerModel,
                                          CastAnimationOptions options,
                                          SomniumCastAnimatable animatable) {
+        // ── Bug 3 diagnostic ──
+        // Logs once per animation start so we can confirm: (a) we reach this branch
+        // with non-empty option sets, (b) each requested part name resolves to a
+        // non-null ModelPart, and (c) visible=false actually gets set. If the layers
+        // are still visible to the user after this runs, something downstream of
+        // setupAnim is forcing visible back to true (most likely a render layer or a
+        // copyFrom on the next frame — neither of which copyFrom touches in vanilla).
+        boolean isFirstFrame = frameCountForCurrentAnim == 1;
+        if (isFirstFrame && (!options.hideBodyPart().isEmpty() || !options.hideLayer().isEmpty())) {
+            System.out.println("[Somnium-DIAG] applyHideOptions: hideBodyPart=" + options.hideBodyPart()
+                    + " hideLayer=" + options.hideLayer());
+        }
+
         java.util.Set<String> hidden = animatable.getHiddenByUs();
         for (String name : options.hideBodyPart()) {
             ModelPart part = SomniumPlayerBoneMap.getPart(playerModel, name);
+            if (isFirstFrame) {
+                System.out.println("[Somnium-DIAG]   hideBodyPart('" + name + "') → "
+                        + (part == null ? "PART NULL (name didn't resolve)"
+                        : "set visible=false (was " + part.visible + ")"));
+            }
             if (part != null) {
                 part.visible = false;
                 hidden.add(name);
@@ -369,6 +409,11 @@ public final class SomniumCastBoneApplicator {
         }
         for (String name : options.hideLayer()) {
             ModelPart part = SomniumPlayerBoneMap.getPart(playerModel, name);
+            if (isFirstFrame) {
+                System.out.println("[Somnium-DIAG]   hideLayer('" + name + "') → "
+                        + (part == null ? "PART NULL (name didn't resolve)"
+                        : "set visible=false (was " + part.visible + ")"));
+            }
             if (part != null) {
                 part.visible = false;
                 hidden.add(name);
@@ -391,14 +436,28 @@ public final class SomniumCastBoneApplicator {
     );
 
     /**
-     * Adds the vanilla head pitch and yaw delta onto every animated arm/leg group.
-     * Head and body parts are deliberately excluded — the head already follows look in
-     * vanilla, and the body rotating to follow the head would be visually jarring.
+     * Adds a fraction of the vanilla head pitch and yaw delta onto every animated arm/leg
+     * group. Head and body parts are deliberately excluded — the head already follows look
+     * in vanilla, and the body rotating to follow the head would be visually jarring.
+     *
+     * <h3>Why half-strength?</h3>
+     * <p>At full influence, an arm yawed 90° around the shoulder swings far enough from
+     * the body to read as "detached" — especially when the animation has scaled the arm
+     * (e.g. a 1.64× Y-scale on Gomu Pistol puts the hand ≈20 voxels from the shoulder,
+     * which crosses an entire block in world space when yawed). Halving the influence
+     * keeps the aim feel responsive (and the actual hit direction is server-side from
+     * player look, independent of this visual) while keeping the limb visually anchored
+     * to the body — which is what addon devs almost always want for MC's rigid-arm look.</p>
      */
+    private static final float FOLLOW_LOOK_INFLUENCE = 0.5f;
+
     private static void applyFollowLook(PlayerModel<?> playerModel,
                                         java.util.Set<String> animatedBones,
                                         float pitch,
                                         float yaw) {
+        float scaledPitch = pitch * FOLLOW_LOOK_INFLUENCE;
+        float scaledYaw   = yaw   * FOLLOW_LOOK_INFLUENCE;
+
         for (java.util.List<String> group : FOLLOW_LOOK_GROUPS) {
             boolean groupAnimated = false;
             for (String name : group) {
@@ -408,67 +467,21 @@ public final class SomniumCastBoneApplicator {
             for (String name : group) {
                 ModelPart part = SomniumPlayerBoneMap.getPart(playerModel, name);
                 if (part != null) {
-                    part.xRot += pitch;
-                    part.yRot += yaw;
+                    part.xRot += scaledPitch;
+                    part.yRot += scaledYaw;
                 }
             }
         }
     }
 
-    // ─── First-person re-apply ───────────────────────────────────────────────
-
-    /**
-     * Re-applies the cast animation's arm/sleeve rotation after vanilla
-     * {@code PlayerRenderer#renderHand} has wiped {@code arm.xRot} and {@code sleeve.xRot}
-     * to {@code 0.0F}.
-     *
-     * <p>Called from {@code PlayerRendererFirstPersonMixin} before the
-     * {@code arm.render(...)} / {@code sleeve.render(...)} calls inside {@code renderHand}.
-     * Our setupAnim mixin already ran during {@code renderHand}'s own {@code setupAnim}
-     * call, so all other channels ({@code yRot}, {@code zRot}, {@code x}, {@code y},
-     * {@code z}, scale) survive vanilla's reset — only the explicit {@code xRot = 0.0F}
-     * assignments need to be undone here.</p>
-     *
-     * <p>No coord-conversion sign juggling is needed at the call site because the
-     * sign flip is identical to the third-person application: a Blockbench
-     * {@code rotX = +π/2} maps to a vanilla {@code xRot = -π/2}, so we write
-     * {@code -bone.getRotX()} directly.</p>
-     *
-     * @param animatable the active animatable for the local player
-     * @param arm        the {@link ModelPart} vanilla {@code renderHand} is about to render
-     * @param sleeve     the {@link ModelPart} vanilla {@code renderHand} is about to render
-     * @param rightHand  {@code true} for the right arm/sleeve, {@code false} for left
-     */
-    public static void reapplyArmRotation(SomniumCastAnimatable animatable,
-                                          ModelPart arm,
-                                          ModelPart sleeve,
-                                          boolean rightHand) {
-        if (animatable == null || animatable.getActiveAnimation() == null) return;
-
-        SomniumCastModel model = CastAnimationModelRegistry.get(animatable.getActiveModelId());
-        if (model == null) return;
-
-        BakedGeoModel baked;
-        try {
-            baked = model.getBakedModel(model.getModelResource(animatable));
-        } catch (Exception e) {
-            return;
-        }
-        if (baked == null) return;
-
-        String armBone    = rightHand ? "right_arm"    : "left_arm";
-        String sleeveBone = rightHand ? "right_sleeve" : "left_sleeve";
-
-        Optional<GeoBone> armOpt = baked.getBone(armBone);
-        if (armOpt.isPresent() && !armOpt.get().isHidden()) {
-            // SET (not add) — vanilla just wrote 0.0F so the field has no useful prior value
-            arm.xRot = -armOpt.get().getRotX();
-        }
-        Optional<GeoBone> sleeveOpt = baked.getBone(sleeveBone);
-        if (sleeveOpt.isPresent() && !sleeveOpt.get().isHidden()) {
-            sleeve.xRot = -sleeveOpt.get().getRotX();
-        }
-    }
+    // ─── First-person rendering ──────────────────────────────────────────────
+    //
+    // First-person support was migrated from a per-arm renderHand mixin to a
+    // full-body re-render approach. See SomniumFirstPersonRenderer for the
+    // new implementation. Setting showInFirstPerson=true on the cast options now
+    // causes the local player to be rendered from inside the eye position during
+    // first-person view, so any animated part that enters the player's line of
+    // sight is visible to them with no special per-part bookkeeping here.
 
     private SomniumCastBoneApplicator() {}
 }

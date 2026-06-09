@@ -1,8 +1,6 @@
 package net.eclipce.somnium.compat.geckolib.player.cast;
 
 import net.minecraft.network.FriendlyByteBuf;
-import net.minecraft.resources.ResourceLocation;
-import net.minecraft.server.level.ServerPlayer;
 
 import java.util.Collections;
 import java.util.HashSet;
@@ -12,7 +10,8 @@ import java.util.Set;
  * Immutable, per-cast-animation behaviour options.
  *
  * <p>Passed to
- * {@link net.eclipce.somnium.compat.geckolib.animation.SomniumAnimHelper#triggerCastAnimation(ServerPlayer, String, ResourceLocation)}
+ * {@link net.eclipce.somnium.compat.geckolib.animation.SomniumAnimHelper#triggerCastAnimation(
+ * net.minecraft.server.level.ServerPlayer, String, net.minecraft.resources.ResourceLocation, CastAnimationOptions)}
  * to fine-tune how a single cast animation interacts with vanilla locomotion, the player's
  * view direction, the visible skin layers, and the first-person view.</p>
  *
@@ -56,6 +55,7 @@ public final class CastAnimationOptions {
     private final Set<String> hideBodyPart;
     private final Set<String> hideLayer;
     private final boolean     showInFirstPerson;
+    private final boolean     heldItemsShown;
 
     private CastAnimationOptions(Builder b) {
         this.suppressVanillaAnimOn = Set.copyOf(b.suppressVanillaAnimOn);
@@ -63,6 +63,7 @@ public final class CastAnimationOptions {
         this.hideBodyPart          = Set.copyOf(b.hideBodyPart);
         this.hideLayer             = Set.copyOf(b.hideLayer);
         this.showInFirstPerson     = b.showInFirstPerson;
+        this.heldItemsShown        = b.heldItemsShown;
     }
 
     public static Builder builder() {
@@ -94,10 +95,22 @@ public final class CastAnimationOptions {
 
     /**
      * If {@code true}, the cast animation's arm rotation/position/scale also plays on the
-     * first-person view (only the arms can render in first person — anatomical limitation).
-     * If {@code false}, the first-person arm renders as vanilla would.
+     * first-person view. When enabled, Somnium renders the full player model from the
+     * player's own eye position so any animated part (arm, leg, head, body) that enters
+     * the player's line of sight is visible to them — matching what third-person observers
+     * see, just from a first-person camera. If {@code false}, the first-person arm renders
+     * as vanilla would.
      */
     public boolean showInFirstPerson() { return showInFirstPerson; }
+
+    /**
+     * If {@code true} (default), the player's held items continue to render in their hand
+     * during the cast animation, in both first- and third-person views. If {@code false},
+     * the held items are hidden for the duration of the animation — useful for animations
+     * where the held item would clip into the animated geometry or otherwise distract from
+     * the visual.
+     */
+    public boolean heldItemsShown() { return heldItemsShown; }
 
     // ── Wire format ──────────────────────────────────────────────────────────
 
@@ -107,6 +120,7 @@ public final class CastAnimationOptions {
         writeStringSet(buf, hideBodyPart);
         writeStringSet(buf, hideLayer);
         buf.writeBoolean(showInFirstPerson);
+        buf.writeBoolean(heldItemsShown);
     }
 
     public static CastAnimationOptions read(FriendlyByteBuf buf) {
@@ -116,6 +130,7 @@ public final class CastAnimationOptions {
         readStringSet(buf, b.hideBodyPart);
         readStringSet(buf, b.hideLayer);
         b.showInFirstPerson = buf.readBoolean();
+        b.heldItemsShown = buf.readBoolean();
         return b.build();
     }
 
@@ -137,6 +152,7 @@ public final class CastAnimationOptions {
         final Set<String> hideBodyPart          = new HashSet<>();
         final Set<String> hideLayer             = new HashSet<>();
         boolean           showInFirstPerson     = false;
+        boolean           heldItemsShown        = true;   // default ON per design
 
         private Builder() {}
 
@@ -169,6 +185,16 @@ public final class CastAnimationOptions {
 
         public Builder showInFirstPerson(boolean value) {
             this.showInFirstPerson = value;
+            return this;
+        }
+
+        /**
+         * Whether the player's held items render in their hand during the cast animation.
+         * Default is {@code true}. Set to {@code false} for animations where the held
+         * item would clip into animated geometry or otherwise distract from the visual.
+         */
+        public Builder heldItemsShown(boolean value) {
+            this.heldItemsShown = value;
             return this;
         }
 

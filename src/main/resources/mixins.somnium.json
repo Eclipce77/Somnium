@@ -7,7 +7,7 @@
   "client": [
     "PlayerModelSetupMixin",
     "ModelPartRenderMixin",
-    "PlayerRendererFirstPersonMixin"
+    "ItemInHandLayerMixin"
   ],
   "injectors": {
     "defaultRequire": 1

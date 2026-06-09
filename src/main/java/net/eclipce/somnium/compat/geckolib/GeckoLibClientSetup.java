@@ -30,7 +30,14 @@ public final class GeckoLibClientSetup {
         // Register the render event handler
         MinecraftForge.EVENT_BUS.register(TransformationRenderHandler.class);
 
+        // Register the cast-animation first-person renderer (handles showInFirstPerson
+        // and heldItemsShown options on CastAnimationOptions). See
+        // SomniumFirstPersonRenderer Javadoc for the full design.
+        MinecraftForge.EVENT_BUS.register(
+                net.eclipce.somnium.compat.geckolib.player.cast.SomniumFirstPersonRenderer.class);
+
         LOGGER.info("Registered GeckoLib transformation renderer");
+        LOGGER.info("Registered Somnium cast-animation first-person renderer");
     }
 
     /**

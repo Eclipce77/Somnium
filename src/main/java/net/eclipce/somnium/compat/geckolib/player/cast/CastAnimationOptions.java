@@ -1,5 +1,7 @@
 package net.eclipce.somnium.compat.geckolib.player.cast;
 
+import net.minecraft.network.FriendlyByteBuf;
+
 import java.util.Collections;
 import java.util.EnumSet;
 import java.util.Set;
@@ -96,6 +98,80 @@ public final class CastAnimationOptions {
     public boolean heldItemsShown() { return heldItemsShown; }
 
     public static Builder builder() { return new Builder(); }
+
+    // ─── Network codec ─────────────────────────────────────────────────────────
+    //
+    // Serialised to / from the play packet that pushes a cast trigger out to every
+    // tracking client. The wire format is six EnumSets followed by two booleans —
+    // all enum values are written as ordinal varInts so the byte count stays small
+    // even when several parts are listed.
+    //
+    // Forward-compatibility tradeoff: ordinals shift if enum entries are reordered
+    // or removed. Adding new entries to the end of CastBodyPart / CastLayer is
+    // safe; reordering is not. If we ever need a stable wire format across
+    // version mismatches, switch to writeUtf(enum.name()) on both sides — slower
+    // (string per entry) but immune to ordinal drift.
+
+    /**
+     * Reads a {@code CastAnimationOptions} from the packet buffer. Pairs with
+     * {@link #write}. Constructed via the private constructor with each enum set
+     * wrapped immutable, matching how {@link Builder#build} produces instances.
+     */
+    public static CastAnimationOptions read(FriendlyByteBuf buf) {
+        return new CastAnimationOptions(
+                readEnumSet(buf, CastBodyPart.class),
+                readEnumSet(buf, CastBodyPart.class),
+                readEnumSet(buf, CastBodyPart.class),
+                readEnumSet(buf, CastLayer.class),
+                buf.readBoolean(),
+                buf.readBoolean());
+    }
+
+    /**
+     * Writes this {@code CastAnimationOptions} into the packet buffer. The order of
+     * fields matches {@link #read} — change one and you must change the other in
+     * lockstep, or every client will deserialise garbage.
+     */
+    public void write(FriendlyByteBuf buf) {
+        writeEnumSet(buf, suppressVanillaAnimOn);
+        writeEnumSet(buf, followPlayerBody);
+        writeEnumSet(buf, hideBodyPart);
+        writeEnumSet(buf, hideLayer);
+        buf.writeBoolean(showInFirstPerson);
+        buf.writeBoolean(heldItemsShown);
+    }
+
+    /**
+     * Reads a varInt-prefixed list of enum ordinals and rebuilds an immutable view
+     * over an {@link EnumSet}. Empty sets are normalised to {@link Collections#emptySet()}
+     * to match {@link Builder#build}'s output, so equality comparisons against
+     * {@link #DEFAULT} stay reflexive across the wire round trip.
+     */
+    private static <E extends Enum<E>> Set<E> readEnumSet(FriendlyByteBuf buf, Class<E> enumClass) {
+        int size = buf.readVarInt();
+        if (size == 0) return Collections.emptySet();
+
+        EnumSet<E> set = EnumSet.noneOf(enumClass);
+        E[] values = enumClass.getEnumConstants();
+        for (int i = 0; i < size; i++) {
+            int ordinal = buf.readVarInt();
+            // Defensive: skip out-of-range ordinals rather than crash the packet
+            // handler. This can happen if the sender is on a newer version with
+            // entries we don't recognise.
+            if (ordinal >= 0 && ordinal < values.length) {
+                set.add(values[ordinal]);
+            }
+        }
+        return Collections.unmodifiableSet(set);
+    }
+
+    /** Writes an enum set as: varInt size, then {@code size} varInt ordinals. */
+    private static <E extends Enum<E>> void writeEnumSet(FriendlyByteBuf buf, Set<E> set) {
+        buf.writeVarInt(set.size());
+        for (E e : set) {
+            buf.writeVarInt(e.ordinal());
+        }
+    }
 
     // ─── Builder ───────────────────────────────────────────────────────────────
 

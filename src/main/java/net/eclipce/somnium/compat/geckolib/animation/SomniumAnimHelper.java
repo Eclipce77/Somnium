@@ -164,9 +164,9 @@ public final class SomniumAnimHelper {
      * <pre>{@code
      * SomniumAnimHelper.triggerCastAnimation(player, "pistol_extend", GOMU_CAST_MODEL,
      *     CastAnimationOptions.builder()
-     *         .suppressVanillaAnimOn("right_arm")
-     *         .followPlayerLook(true)
-     *         .hideLayer("right_sleeve")
+     *         .suppressVanillaAnimOn(CastBodyPart.RIGHT_ARM)
+     *         .followPlayerBody(CastBodyPart.RIGHT_ARM)
+     *         .hideLayer(CastLayer.RIGHT_SLEEVE)
      *         .showInFirstPerson(true)
      *         .build());
      * }</pre>

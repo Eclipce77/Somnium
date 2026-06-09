@@ -55,11 +55,20 @@ public class SomniumCastAnimatable implements GeoAnimatable {
     private CastAnimationOptions currentOptions = CastAnimationOptions.DEFAULT;
 
     /**
-     * Body parts currently hidden by us (via {@link CastAnimationOptions#hideBodyPart()} or
-     * {@link CastAnimationOptions#hideLayer()}). Tracked so the applicator can restore them
-     * when the option set changes, the animation ends, or another animation is queued.
+     * Base body parts currently hidden by us via
+     * {@link CastAnimationOptions#hideBodyPart()}. Tracked so the applicator can restore
+     * them when the option set changes, the animation ends, or another animation is queued.
      */
-    private final java.util.Set<String> hiddenByUs = java.util.concurrent.ConcurrentHashMap.newKeySet();
+    private final java.util.Set<CastBodyPart> hiddenBodyParts =
+            java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+    /**
+     * Skin overlay layers currently hidden by us via {@link CastAnimationOptions#hideLayer()}.
+     * Stored separately from {@link #hiddenBodyParts} because the API distinguishes the
+     * two and the restoration loop iterates them separately too.
+     */
+    private final java.util.Set<CastLayer> hiddenLayers =
+            java.util.concurrent.ConcurrentHashMap.newKeySet();
 
     // Cached RawAnimation to avoid creating a new instance every render frame.
     // GeckoLib compares by reference when deciding whether to restart — a new
@@ -167,8 +176,12 @@ public class SomniumCastAnimatable implements GeoAnimatable {
         activeAnimation = null;
         activeModelId = null;
         currentOptions = CastAnimationOptions.DEFAULT;
-        // hiddenByUs is intentionally NOT cleared here — the applicator restores those parts
-        // on its next call by reading hiddenByUs and re-showing them.
+        // hiddenBodyParts / hiddenLayers are intentionally NOT cleared here — the
+        // applicator restores those parts on its next call by reading them and
+        // setting visible=true. Clearing here would leave the parts stuck invisible
+        // because setModelProperties would set them visible=true at the start of the
+        // next render, but no setter would ever set them back if the player skin part
+        // toggle isn't enabled for them.
     }
 
     // ─── Accessors ────────────────────────────────────────────────────────────
@@ -177,7 +190,8 @@ public class SomniumCastAnimatable implements GeoAnimatable {
     @Nullable public String getActiveModelId()           { return activeModelId; }
     public long             getInstanceId()              { return instanceId; }
     public CastAnimationOptions getCurrentOptions()      { return currentOptions; }
-    public java.util.Set<String> getHiddenByUs()         { return hiddenByUs; }
+    public java.util.Set<CastBodyPart> getHiddenBodyParts() { return hiddenBodyParts; }
+    public java.util.Set<CastLayer>    getHiddenLayers()    { return hiddenLayers; }
 
     // ─── GeoAnimatable ────────────────────────────────────────────────────────
 

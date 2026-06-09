@@ -59,7 +59,8 @@ public abstract class PlayerModelSetupMixin {
             // branch is purely defensive).
             if (!SomniumCastAnimatable.isActive(player.getUUID())) return;
         } else if (animatable.getActiveAnimation() == null
-                && animatable.getHiddenByUs().isEmpty()
+                && animatable.getHiddenBodyParts().isEmpty()
+                && animatable.getHiddenLayers().isEmpty()
                 && !SomniumCastAnimatable.isActive(player.getUUID())) {
             return;
         }
@@ -76,19 +77,35 @@ public abstract class PlayerModelSetupMixin {
                 + " modelClass=" + self.getClass().getSimpleName());
         SomniumCastBoneApplicator.apply(player, self, partialTick);
 
-        // ── First-person own-player head/hat hide ──
+        // ── First-person own-player part hiding ──
         // When SomniumFirstPersonRenderer is re-rendering the local player from inside
-        // the FP camera, we need head and hat invisible so the player doesn't see their
-        // own face / hat brim filling the screen. This MUST happen here in setupAnim
+        // the FP camera, we want only the arms (and their sleeve overlays) plus held
+        // items to draw — head/body/legs and their layer overlays would either clip
+        // the camera or block view of the animation. This MUST happen here in setupAnim
         // rather than in the FP renderer itself: PlayerRenderer.render's very first call
         // is setModelProperties() which does model.setAllVisible(true), wiping any
         // visibility we set before render. setupAnim runs AFTER setModelProperties, and
         // PlayerModel's post-super copyFrom calls don't touch the visible flag, so a flag
         // set here survives intact through the rest of the render.
+        //
+        // The user's own hideBodyPart / hideLayer options applied above still take
+        // effect — applyHideOptions already ran inside the applicator's apply() call —
+        // so any extra parts the addon hid stay hidden. We only force-hide head/body/
+        // legs and their overlays; arms/sleeves remain at whatever the user's options
+        // (or vanilla setModelProperties) left them.
         if (net.eclipce.somnium.compat.geckolib.player.cast.SomniumFirstPersonRenderer
                 .RENDERING_OWN_PLAYER_IN_FIRST_PERSON.get()) {
-            self.head.visible = false;
-            self.hat.visible  = false;
+            self.head.visible       = false;
+            self.hat.visible        = false;
+            self.body.visible       = false;
+            self.jacket.visible     = false;
+            self.rightLeg.visible   = false;
+            self.leftLeg.visible    = false;
+            self.rightPants.visible = false;
+            self.leftPants.visible  = false;
+            // Intentionally NOT touched: rightArm, leftArm, rightSleeve, leftSleeve.
+            // Held items render through ItemInHandLayer, which uses its own visibility
+            // path (cancellable via heldItemsShown=false in the layer mixin).
         }
     }
 }

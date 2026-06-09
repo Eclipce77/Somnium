@@ -229,41 +229,59 @@ public final class SomniumCastBoneApplicator {
         // animation deltas. Vanilla setupAnim already ran by the time we get here, so the
         // part holds the vanilla walk-swing / attack / look pose; resetPose() wipes that
         // to the part's rig-default. Our additive deltas then sit on rest, not on vanilla.
-        for (String partName : options.suppressVanillaAnimOn()) {
-            ModelPart part = SomniumPlayerBoneMap.getPart(playerModel, partName);
-            if (part != null) part.resetPose();
+        //
+        // Layer overlays (sleeves, pants, jacket, hat) are NOT individually reset here —
+        // the post-application syncLayersFromBaseParts() pass below copies the base
+        // part's final pose to its layer, which inherently resets the layer to match.
+        for (CastBodyPart part : options.suppressVanillaAnimOn()) {
+            part.get(playerModel).resetPose();
         }
 
         // ── Capture vanilla head pose BEFORE applyAllBones mutates the head ModelPart ──
-        // Used by followPlayerLook below. We need pitch (head.xRot) and yaw delta
-        // (head.yRot, which vanilla setupAnim has already set to netHeadYaw in radians)
-        // as the source values to add onto animated arm/leg pairs.
+        // Used by followPlayerBody below. We need the head pitch (head.xRot) at the value
+        // vanilla setupAnim wrote, before any animation delta moves the head.
         float vanillaHeadPitch = 0f;
-        float vanillaHeadYaw   = 0f;
-        if (options.followPlayerLook()) {
-            ModelPart head = SomniumPlayerBoneMap.getPart(playerModel, "head");
-            if (head != null) {
-                vanillaHeadPitch = head.xRot;
-                vanillaHeadYaw   = head.yRot;
-            }
+        if (!options.followPlayerBody().isEmpty()) {
+            vanillaHeadPitch = playerModel.head.xRot;
         }
 
-        // Apply bones — track which received a non-zero delta so followPlayerLook below
+        // Apply bones — track which received a non-zero delta so followPlayerBody below
         // can scope itself to only animated parts (per the API contract).
         java.util.Set<String> animatedBones = new java.util.HashSet<>();
         applyAllBones(bakedModel, playerModel, animatedBones);
 
-        // ── followPlayerLook ──
-        // Add the head's pitch and yaw delta to animated arms and legs, so the punch /
-        // kick / projectile motion angles with the player's view direction.
-        if (options.followPlayerLook()) {
-            applyFollowLook(playerModel, animatedBones, vanillaHeadPitch, vanillaHeadYaw);
+        // ── followPlayerBody ──
+        // Add the head pitch as additional X-axis rotation to each specified part
+        // that the animation actually touched. Yaw is intentionally not applied —
+        // the entity body yaw already rotates the whole rig, and adding a head-yaw
+        // delta on top would swing bones off the body, breaking the "anchored to the
+        // body" intent. See applyFollowBody for the per-part rules and the layer-pair
+        // expansion (arm pitches → sleeve also pitches via copyFrom downstream).
+        if (!options.followPlayerBody().isEmpty()) {
+            applyFollowBody(playerModel, options.followPlayerBody(), animatedBones, vanillaHeadPitch);
         }
 
+        // ── Sync skin-layer overlays to their base parts ──
+        // PlayerModel.setupAnim ends with a series of copyFrom calls that align each
+        // layer (sleeves, pants, hat, jacket) with its base part (arms, legs, head, body).
+        // We've since mutated the base parts (suppress, applyAllBones, followPlayerBody)
+        // without touching the layers, so they now hold the stale vanilla pose. A second
+        // copyFrom pass here re-anchors each layer to whatever its base part finally
+        // settled on — without this, e.g. the right sleeve would visibly trail the
+        // animated right arm, leaving a "ghost arm" at the rest position.
+        //
+        // copyFrom transfers transform fields only (x/y/z, rotations, scale) — visible
+        // is untouched, so the next applyHideOptions call still operates on the right
+        // flags. Scale registered via SomniumBoneScaleMap also propagates: each layer
+        // shares the same ModelPart::render path that ModelPartRenderMixin hooks, and
+        // the layer's ModelPart identity has its own scale entry if one was set for it.
+        syncLayersFromBaseParts(playerModel);
+
         // ── hideBodyPart / hideLayer ──
-        // Set the requested ModelParts invisible and record them in hiddenByUs so that
-        // restorePreviouslyHidden (at the top of the next frame's apply()) can re-show
-        // them when the option set changes or the animation ends.
+        // Set the requested ModelParts invisible and record them in the animatable's
+        // hiddenBodyParts / hiddenLayers sets so that restorePreviouslyHidden (at the
+        // top of the next frame's apply()) can re-show them when the option set changes
+        // or the animation ends.
         applyHideOptions(playerModel, options, animatable);
     }
 
@@ -298,18 +316,32 @@ public final class SomniumCastBoneApplicator {
     private static void applyAllBones(BakedGeoModel bakedModel,
                                       PlayerModel<?> playerModel,
                                       java.util.Set<String> animatedBones) {
-        applyBoneIfPresent(bakedModel, playerModel, "body",         animatedBones);
-        applyBoneIfPresent(bakedModel, playerModel, "head",         animatedBones);
-        applyBoneIfPresent(bakedModel, playerModel, "hat",          animatedBones);
-        applyBoneIfPresent(bakedModel, playerModel, "jacket",       animatedBones);
-        applyBoneIfPresent(bakedModel, playerModel, "right_arm",    animatedBones);
-        applyBoneIfPresent(bakedModel, playerModel, "right_sleeve", animatedBones);
-        applyBoneIfPresent(bakedModel, playerModel, "left_arm",     animatedBones);
-        applyBoneIfPresent(bakedModel, playerModel, "left_sleeve",  animatedBones);
-        applyBoneIfPresent(bakedModel, playerModel, "right_leg",    animatedBones);
-        applyBoneIfPresent(bakedModel, playerModel, "right_pants",  animatedBones);
-        applyBoneIfPresent(bakedModel, playerModel, "left_leg",     animatedBones);
-        applyBoneIfPresent(bakedModel, playerModel, "left_pants",   animatedBones);
+        // Only base parts — layers (sleeves, pants, hat, jacket) sync to their base
+        // part via syncLayersFromBaseParts() once all base-part mutations are done.
+        // Layer-specific animation channels in .geo.json files are intentionally
+        // ignored — animators virtually always want sleeve to match arm exactly, and
+        // bypassing that with an independent sleeve channel would be a rare-enough
+        // case to handle as a future opt-in rather than baseline behaviour.
+        applyBoneIfPresent(bakedModel, playerModel, "body",      animatedBones);
+        applyBoneIfPresent(bakedModel, playerModel, "head",      animatedBones);
+        applyBoneIfPresent(bakedModel, playerModel, "right_arm", animatedBones);
+        applyBoneIfPresent(bakedModel, playerModel, "left_arm",  animatedBones);
+        applyBoneIfPresent(bakedModel, playerModel, "right_leg", animatedBones);
+        applyBoneIfPresent(bakedModel, playerModel, "left_leg",  animatedBones);
+    }
+
+    /**
+     * Mirrors the {@code copyFrom} sequence at the end of {@code PlayerModel.setupAnim},
+     * which we missed because our mixin runs <em>after</em> setupAnim returned. Each
+     * layer takes its base part's final transform — including any deltas we just wrote.
+     */
+    private static void syncLayersFromBaseParts(PlayerModel<?> m) {
+        m.hat.copyFrom(m.head);
+        m.jacket.copyFrom(m.body);
+        m.rightSleeve.copyFrom(m.rightArm);
+        m.leftSleeve.copyFrom(m.leftArm);
+        m.rightPants.copyFrom(m.rightLeg);
+        m.leftPants.copyFrom(m.leftLeg);
     }
 
     private static void applyBoneIfPresent(BakedGeoModel baked,
@@ -386,114 +418,94 @@ public final class SomniumCastBoneApplicator {
      * Called unconditionally at the top of every {@link #apply} so visibility
      * self-heals as soon as an animation ends or its hide-set changes.
      */
+    /**
+     * Re-shows every base part and layer we hid on a previous frame. Called
+     * unconditionally at the top of every {@link #apply} so visibility self-heals as
+     * soon as an animation ends or its hide-set changes.
+     *
+     * <p>The two enum-typed sets ({@code hiddenBodyParts} and {@code hiddenLayers})
+     * live on the animatable and persist across frames. Each iteration calls
+     * {@code enumValue.get(model)} which is a constant-time field access — no
+     * string-to-part lookup. Both sets are cleared after the restore so the next
+     * frame's {@code applyHideOptions} starts from empty.</p>
+     */
     private static void restorePreviouslyHidden(PlayerModel<?> playerModel, SomniumCastAnimatable animatable) {
-        java.util.Set<String> hidden = animatable.getHiddenByUs();
-        if (hidden.isEmpty()) return;
-        for (String name : hidden) {
-            ModelPart part = SomniumPlayerBoneMap.getPart(playerModel, name);
-            if (part != null) part.visible = true;
-        }
-        hidden.clear();
+        java.util.Set<CastBodyPart> hiddenParts  = animatable.getHiddenBodyParts();
+        java.util.Set<CastLayer>    hiddenLayers = animatable.getHiddenLayers();
+        if (hiddenParts.isEmpty() && hiddenLayers.isEmpty()) return;
+
+        for (CastBodyPart p : hiddenParts) p.get(playerModel).visible = true;
+        for (CastLayer    l : hiddenLayers) l.get(playerModel).visible = true;
+        hiddenParts.clear();
+        hiddenLayers.clear();
     }
 
     /**
-     * Applies the current frame's hide-set. The two hide channels (body and layer) are
-     * functionally identical — both set {@link ModelPart#visible} false — and are kept
-     * separate purely to give the API surface clarity about what kind of part is targeted.
+     * Applies the current frame's hide-set. The two channels (body part / overlay
+     * layer) write to two separate enum-typed sets so {@link #restorePreviouslyHidden}
+     * can iterate each type with its own resolved {@code ModelPart} lookup.
      */
     private static void applyHideOptions(PlayerModel<?> playerModel,
                                          CastAnimationOptions options,
                                          SomniumCastAnimatable animatable) {
-        // ── Bug 3 diagnostic ──
-        // Logs once per animation start so we can confirm: (a) we reach this branch
-        // with non-empty option sets, (b) each requested part name resolves to a
-        // non-null ModelPart, and (c) visible=false actually gets set. If the layers
-        // are still visible to the user after this runs, something downstream of
-        // setupAnim is forcing visible back to true (most likely a render layer or a
-        // copyFrom on the next frame — neither of which copyFrom touches in vanilla).
-        boolean isFirstFrame = frameCountForCurrentAnim == 1;
-        if (isFirstFrame && (!options.hideBodyPart().isEmpty() || !options.hideLayer().isEmpty())) {
-            System.out.println("[Somnium-DIAG] applyHideOptions: hideBodyPart=" + options.hideBodyPart()
-                    + " hideLayer=" + options.hideLayer());
-        }
+        java.util.Set<CastBodyPart> hiddenParts  = animatable.getHiddenBodyParts();
+        java.util.Set<CastLayer>    hiddenLayers = animatable.getHiddenLayers();
 
-        java.util.Set<String> hidden = animatable.getHiddenByUs();
-        for (String name : options.hideBodyPart()) {
-            ModelPart part = SomniumPlayerBoneMap.getPart(playerModel, name);
-            if (isFirstFrame) {
-                System.out.println("[Somnium-DIAG]   hideBodyPart('" + name + "') → "
-                        + (part == null ? "PART NULL (name didn't resolve)"
-                        : "set visible=false (was " + part.visible + ")"));
-            }
-            if (part != null) {
-                part.visible = false;
-                hidden.add(name);
-            }
+        for (CastBodyPart p : options.hideBodyPart()) {
+            p.get(playerModel).visible = false;
+            hiddenParts.add(p);
         }
-        for (String name : options.hideLayer()) {
-            ModelPart part = SomniumPlayerBoneMap.getPart(playerModel, name);
-            if (isFirstFrame) {
-                System.out.println("[Somnium-DIAG]   hideLayer('" + name + "') → "
-                        + (part == null ? "PART NULL (name didn't resolve)"
-                        : "set visible=false (was " + part.visible + ")"));
-            }
-            if (part != null) {
-                part.visible = false;
-                hidden.add(name);
-            }
+        for (CastLayer l : options.hideLayer()) {
+            l.get(playerModel).visible = false;
+            hiddenLayers.add(l);
         }
     }
 
     /**
-     * Arm and leg layer pairs for {@link #applyFollowLook}. When any member of a group
-     * has a non-zero animated transform, all members of the group receive the look
-     * influence so the skin layer stays glued to its base part (otherwise a follow-look
-     * rotation applied only to {@code right_arm} would leave {@code right_sleeve}
-     * trailing behind at the vanilla pose).
-     */
-    private static final java.util.List<java.util.List<String>> FOLLOW_LOOK_GROUPS = java.util.List.of(
-            java.util.List.of("right_arm",  "right_sleeve"),
-            java.util.List.of("left_arm",   "left_sleeve"),
-            java.util.List.of("right_leg",  "right_pants"),
-            java.util.List.of("left_leg",   "left_pants")
-    );
-
-    /**
-     * Adds a fraction of the vanilla head pitch and yaw delta onto every animated arm/leg
-     * group. Head and body parts are deliberately excluded — the head already follows look
-     * in vanilla, and the body rotating to follow the head would be visually jarring.
+     * Adds the player's head pitch (X-axis rotation, signed by camera up/down) onto
+     * each requested {@link CastBodyPart} that the cast animation actually moved this
+     * frame. The body's yaw is intentionally not applied — it's already inherited by
+     * every body-anchored bone via the entity's body yaw being a PoseStack rotation
+     * one level up. Adding the head's yaw delta on top would swing limbs off the
+     * shoulder/hip, breaking the "anchored to the body" intent.
      *
-     * <h3>Why half-strength?</h3>
-     * <p>At full influence, an arm yawed 90° around the shoulder swings far enough from
-     * the body to read as "detached" — especially when the animation has scaled the arm
-     * (e.g. a 1.64× Y-scale on Gomu Pistol puts the hand ≈20 voxels from the shoulder,
-     * which crosses an entire block in world space when yawed). Halving the influence
-     * keeps the aim feel responsive (and the actual hit direction is server-side from
-     * player look, independent of this visual) while keeping the limb visually anchored
-     * to the body — which is what addon devs almost always want for MC's rigid-arm look.</p>
+     * <h3>Per-part scope</h3>
+     * <p>The caller passes which parts they want pitched. We only apply pitch to a
+     * given part if (a) the user requested it and (b) the cast animation produced a
+     * non-zero delta on that bone this frame — looking up shouldn't pitch a
+     * stationary arm doing nothing. {@link CastBodyPart#HEAD} and
+     * {@link CastBodyPart#BODY} are silently ignored: the head already pitches with
+     * the look in vanilla, and the body never pitches in MC.</p>
+     *
+     * <h3>Layer overlays</h3>
+     * <p>Sleeves and pants are NOT touched here directly. The post-application
+     * {@code syncLayersFromBaseParts} pass copies each base part's final transform
+     * (including the pitch added by this method) onto its overlay layer, so the
+     * sleeve / pant tracks the limb without any per-pair bookkeeping in this method.</p>
+     *
+     * <h3>Why full strength (no halving)</h3>
+     * <p>The previous {@code followPlayerLook} halved its influence because it
+     * applied both pitch and yaw simultaneously, which moved limbs noticeably off
+     * the body when the head turned. Pitch-only with the body yaw factored out
+     * keeps every joint at its rig pivot — there's no "detached" failure mode to
+     * mitigate against, so an aim-like 1.0× pitch is what addons actually want.</p>
      */
-    private static final float FOLLOW_LOOK_INFLUENCE = 0.5f;
-
-    private static void applyFollowLook(PlayerModel<?> playerModel,
+    private static void applyFollowBody(PlayerModel<?> playerModel,
+                                        java.util.Set<CastBodyPart> requestedParts,
                                         java.util.Set<String> animatedBones,
-                                        float pitch,
-                                        float yaw) {
-        float scaledPitch = pitch * FOLLOW_LOOK_INFLUENCE;
-        float scaledYaw   = yaw   * FOLLOW_LOOK_INFLUENCE;
+                                        float pitch) {
+        for (CastBodyPart part : requestedParts) {
+            // Head/body are no-ops by design (see Javadoc). Skip silently so addon
+            // authors can pass a "all four limbs" preset without it doing weird
+            // things if they ever accidentally include head/body in the list.
+            if (part == CastBodyPart.HEAD || part == CastBodyPart.BODY) continue;
 
-        for (java.util.List<String> group : FOLLOW_LOOK_GROUPS) {
-            boolean groupAnimated = false;
-            for (String name : group) {
-                if (animatedBones.contains(name)) { groupAnimated = true; break; }
-            }
-            if (!groupAnimated) continue;
-            for (String name : group) {
-                ModelPart part = SomniumPlayerBoneMap.getPart(playerModel, name);
-                if (part != null) {
-                    part.xRot += scaledPitch;
-                    part.yRot += scaledYaw;
-                }
-            }
+            // Only pitch parts the animation actually moved this frame. Pitching a
+            // limb the animation isn't touching would just tilt the vanilla walk
+            // swing, which is never what the addon wants.
+            if (!animatedBones.contains(part.partName())) continue;
+
+            part.get(playerModel).xRot += pitch;
         }
     }
 

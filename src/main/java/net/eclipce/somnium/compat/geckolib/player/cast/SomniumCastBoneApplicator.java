@@ -267,29 +267,20 @@ public final class SomniumCastBoneApplicator {
             part.get(playerModel).resetPose();
         }
 
-        // ── Capture vanilla head pose BEFORE applyAllBones mutates the head ModelPart ──
-        // Used by followPlayerBody below. We need the head pitch (head.xRot) at the value
-        // vanilla setupAnim wrote, before any animation delta moves the head.
-        float vanillaHeadPitch = 0f;
-        if (!options.followPlayerBody().isEmpty()) {
-            vanillaHeadPitch = playerModel.head.xRot;
-        }
-
-        // Apply bones — track which received a non-zero delta so followPlayerBody below
-        // can scope itself to only animated parts (per the API contract).
+        // Apply bones — track which received a non-zero delta. (animatedBones is retained
+        // for potential future per-bone option scoping; followPlayerBody no longer uses it
+        // — that flag now triggers a server-side body-yaw snap on activation instead of a
+        // render-time arm pitch. See SomniumAnimHelper.triggerCastAnimation.)
         java.util.Set<String> animatedBones = new java.util.HashSet<>();
         applyAllBones(bakedModel, playerModel, animatedBones);
 
-        // ── followPlayerBody ──
-        // Add the head pitch as additional X-axis rotation to each specified part
-        // that the animation actually touched. Yaw is intentionally not applied —
-        // the entity body yaw already rotates the whole rig, and adding a head-yaw
-        // delta on top would swing bones off the body, breaking the "anchored to the
-        // body" intent. See applyFollowBody for the per-part rules and the layer-pair
-        // expansion (arm pitches → sleeve also pitches via copyFrom downstream).
-        if (!options.followPlayerBody().isEmpty()) {
-            applyFollowBody(playerModel, options.followPlayerBody(), animatedBones,
-                    options.suppressVanillaAnimOn(), vanillaHeadPitch);
+        // ── followPlayerLook ──
+        // Pitch the requested base parts to match the player's vertical look angle, so the
+        // limb aims up/down with the camera. Applied after applyAllBones (on top of the
+        // animation pose) and BEFORE syncLayersFromBaseParts, so the sleeve/pant overlay
+        // copies the pitched arm/leg and tracks it without separate handling.
+        if (!options.followPlayerLook().isEmpty()) {
+            applyFollowLook(playerModel, options.followPlayerLook(), player);
         }
 
         // ── Sync skin-layer overlays to their base parts ──
@@ -492,69 +483,46 @@ public final class SomniumCastBoneApplicator {
         }
     }
 
+    // followPlayerBody was previously a render-time per-bone pitch applied here via an
+    // applyFollowBody() helper. It has been replaced by a server-side body-yaw snap on
+    // activation (see SomniumAnimHelper.triggerCastAnimation), which faces the whole rig
+    // where the player is looking. Vertical aim is now a separate, explicit option —
+    // followPlayerLook — implemented by applyFollowLook below.
+
     /**
-     * Adds the player's head pitch (X-axis rotation, signed by camera up/down) onto
-     * each requested {@link CastBodyPart} that the cast animation actually moved this
-     * frame. The body's yaw is intentionally not applied — it's already inherited by
-     * every body-anchored bone via the entity's body yaw being a PoseStack rotation
-     * one level up. Adding the head's yaw delta on top would swing limbs off the
-     * shoulder/hip, breaking the "anchored to the body" intent.
+     * Pitches each requested base part to match the player's vertical look angle, rotating
+     * the part about its own pivot (shoulder for arms). This is the {@code followPlayerLook}
+     * option: it lets an aimable limb track a target above or below the player.
      *
-     * <h3>Per-part scope</h3>
-     * <p>The caller passes which parts they want pitched. We only apply pitch to a
-     * given part if (a) the user requested it and (b) the cast animation produced a
-     * non-zero delta on that bone this frame — looking up shouldn't pitch a
-     * stationary arm doing nothing. {@link CastBodyPart#HEAD} and
-     * {@link CastBodyPart#BODY} are silently ignored: the head already pitches with
-     * the look in vanilla, and the body never pitches in MC.</p>
+     * <h3>Sign convention</h3>
+     * <p>{@code player.getXRot()} is POSITIVE when looking down and NEGATIVE when looking
+     * up. A vanilla arm's {@code xRot} increases to swing the hand downward about the
+     * shoulder. So aiming down (positive look pitch) needs a positive {@code xRot} delta,
+     * and aiming up (negative look pitch) a negative one — i.e. we ADD the look pitch (in
+     * radians) directly. This is applied additively on top of whatever pose the animation
+     * produced, so the limb keeps its animated character while gaining vertical aim.</p>
      *
-     * <h3>Layer overlays</h3>
-     * <p>Sleeves and pants are NOT touched here directly. The post-application
-     * {@code syncLayersFromBaseParts} pass copies each base part's final transform
-     * (including the pitch added by this method) onto its overlay layer, so the
-     * sleeve / pant tracks the limb without any per-pair bookkeeping in this method.</p>
-     *
-     * <h3>Why full strength (no halving)</h3>
-     * <p>The previous {@code followPlayerLook} halved its influence because it
-     * applied both pitch and yaw simultaneously, which moved limbs noticeably off
-     * the body when the head turned. Pitch-only with the body yaw factored out
-     * keeps every joint at its rig pivot — there's no "detached" failure mode to
-     * mitigate against, so an aim-like 1.0× pitch is what addons actually want.</p>
+     * <h3>Scope</h3>
+     * <p>HEAD and BODY are skipped: the head already pitches with the look in vanilla, and
+     * the torso never pitches. Arms are the intended targets; legs are permitted but rarely
+     * meaningful. Layer overlays are NOT touched here — the post-call
+     * {@code syncLayersFromBaseParts} copies the pitched base part onto its overlay.</p>
      */
-    private static void applyFollowBody(PlayerModel<?> playerModel,
+    private static void applyFollowLook(PlayerModel<?> playerModel,
                                         java.util.Set<CastBodyPart> requestedParts,
-                                        java.util.Set<String> animatedBones,
-                                        java.util.Set<CastBodyPart> suppressedParts,
-                                        float pitch) {
+                                        Player player) {
+        // getXRot() is the player's current pitch in degrees (positive = looking down).
+        // We use the current value rather than a partial-tick-interpolated one: at render
+        // time it's accurate to within a tick, which is imperceptible for arm aim, and it
+        // avoids depending on the interpolated-getter name. Convert to radians for xRot.
+        float lookPitchRad = (float) Math.toRadians(player.getXRot());
+
         for (CastBodyPart part : requestedParts) {
-            // Head/body are no-ops by design (see Javadoc). Skip silently so addon
-            // authors can pass a "all four limbs" preset without it doing weird
-            // things if they ever accidentally include head/body in the list.
             if (part == CastBodyPart.HEAD || part == CastBodyPart.BODY) continue;
-
-            // A part is eligible for pitch if the animation moved it this frame OR it is
-            // explicitly suppressed (the animation owns that limb's pose for the whole
-            // cast, even on frames where the keyframed delta momentarily rounds to zero).
-            //
-            // The suppressed check fixes the "up/down jerk at the end" reported on Pistol:
-            // as an animation winds down, a bone's delta can dip to exactly 0f for a frame,
-            // dropping it out of animatedBones; without this it would lose its pitch for
-            // that one frame and snap back the next, reading as a jerk. Suppressed limbs
-            // stay pitched smoothly across the whole extend+retract.
-            boolean eligible = animatedBones.contains(part.partName())
-                    || suppressedParts.contains(part);
-            if (!eligible) continue;
-
-            // Sign: vanilla head.xRot is NEGATIVE when looking up. The cast arm is
-            // keyframed extending forward, where a POSITIVE xRot delta swings the hand
-            // downward (toward the legs). So to make a forward arm track the look, we
-            // SUBTRACT the head pitch: looking up (negative head pitch) must raise the arm
-            // (negative arm-xRot contribution → hand goes up). Adding it instead — the
-            // previous behaviour — dropped the arm below the look line when aiming up/down,
-            // which is the "animation pulled downward" artifact.
-            part.get(playerModel).xRot -= pitch;
+            part.get(playerModel).xRot += lookPitchRad;
         }
     }
+
 
     // ─── First-person rendering ──────────────────────────────────────────────
     //

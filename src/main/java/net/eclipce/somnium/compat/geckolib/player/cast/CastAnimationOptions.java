@@ -38,6 +38,7 @@ public final class CastAnimationOptions {
 
     private final Set<CastBodyPart> suppressVanillaAnimOn;
     private final Set<CastBodyPart> followPlayerBody;
+    private final Set<CastBodyPart> followPlayerLook;
     private final Set<CastBodyPart> hideBodyPart;
     private final Set<CastLayer>    hideLayer;
     private final boolean showInFirstPerson;
@@ -46,6 +47,7 @@ public final class CastAnimationOptions {
 
     private CastAnimationOptions(Set<CastBodyPart> suppressVanillaAnimOn,
                                  Set<CastBodyPart> followPlayerBody,
+                                 Set<CastBodyPart> followPlayerLook,
                                  Set<CastBodyPart> hideBodyPart,
                                  Set<CastLayer>    hideLayer,
                                  boolean showInFirstPerson,
@@ -53,6 +55,7 @@ public final class CastAnimationOptions {
                                  int     animationLengthTicks) {
         this.suppressVanillaAnimOn = suppressVanillaAnimOn;
         this.followPlayerBody      = followPlayerBody;
+        this.followPlayerLook      = followPlayerLook;
         this.hideBodyPart          = hideBodyPart;
         this.hideLayer             = hideLayer;
         this.showInFirstPerson     = showInFirstPerson;
@@ -71,12 +74,20 @@ public final class CastAnimationOptions {
     public Set<CastBodyPart> suppressVanillaAnimOn() { return suppressVanillaAnimOn; }
 
     /**
-     * The base parts that should also receive the player's head pitch as an
-     * additional X-axis rotation on top of the animation. Use for aimable abilities
-     * — an arm extending forward will tilt up when the player looks up, etc. See
-     * {@link Builder#followPlayerBody} for the rationale and scope.
+     * The presence of any part here flags the ability as body-aiming: on activation the
+     * server snaps the player's body yaw to their look direction so the whole rig faces
+     * where they're aiming. (The specific parts are not individually meaningful for the
+     * yaw snap — a non-empty set is the trigger. The set type is kept as CastBodyPart for
+     * API symmetry and forward use.) See {@link Builder#followPlayerBody}.
      */
     public Set<CastBodyPart> followPlayerBody() { return followPlayerBody; }
+
+    /**
+     * Base parts that should pitch (X-axis) to match the player's vertical look angle, so
+     * the limb aims up/down with the camera. Applied at render time around each part's
+     * own pivot (the shoulder, for arms). See {@link Builder#followPlayerLook}.
+     */
+    public Set<CastBodyPart> followPlayerLook() { return followPlayerLook; }
 
     /** Base parts to hide for the duration of the animation. */
     public Set<CastBodyPart> hideBodyPart() { return hideBodyPart; }
@@ -138,6 +149,7 @@ public final class CastAnimationOptions {
                 readEnumSet(buf, CastBodyPart.class),
                 readEnumSet(buf, CastBodyPart.class),
                 readEnumSet(buf, CastBodyPart.class),
+                readEnumSet(buf, CastBodyPart.class),
                 readEnumSet(buf, CastLayer.class),
                 buf.readBoolean(),
                 buf.readBoolean(),
@@ -152,6 +164,7 @@ public final class CastAnimationOptions {
     public void write(FriendlyByteBuf buf) {
         writeEnumSet(buf, suppressVanillaAnimOn);
         writeEnumSet(buf, followPlayerBody);
+        writeEnumSet(buf, followPlayerLook);
         writeEnumSet(buf, hideBodyPart);
         writeEnumSet(buf, hideLayer);
         buf.writeBoolean(showInFirstPerson);
@@ -196,6 +209,7 @@ public final class CastAnimationOptions {
     public static final class Builder {
         private final EnumSet<CastBodyPart> suppressVanillaAnimOn = EnumSet.noneOf(CastBodyPart.class);
         private final EnumSet<CastBodyPart> followPlayerBody      = EnumSet.noneOf(CastBodyPart.class);
+        private final EnumSet<CastBodyPart> followPlayerLook      = EnumSet.noneOf(CastBodyPart.class);
         private final EnumSet<CastBodyPart> hideBodyPart          = EnumSet.noneOf(CastBodyPart.class);
         private final EnumSet<CastLayer>    hideLayer             = EnumSet.noneOf(CastLayer.class);
         private boolean showInFirstPerson = false;
@@ -220,30 +234,48 @@ public final class CastAnimationOptions {
         }
 
         /**
-         * Adds the player's head pitch as an extra X-axis rotation on the given parts,
-         * so the animation aims with where the player is looking. The body's yaw is
-         * already inherited automatically (the whole rig rotates with the entity body
-         * yaw), so this only handles the pitch axis — which is the bit vanilla doesn't
-         * already give you on body-anchored bones.
+         * Marks this ability as body-aiming: when triggered, the server snaps the player's
+         * body yaw to their current look direction, so the whole rig turns to face where
+         * they're aiming and it's obvious to the player where the ability will go. If the
+         * body and look are already aligned (within ~1°), it does nothing.
          *
-         * <h3>Scope</h3>
-         * <p>Pitch is applied only to base parts that the cast animation actually
-         * touches this frame. A right-arm-only animation with
-         * {@code followPlayerBody(RIGHT_ARM, LEFT_ARM)} only pitches the right arm —
-         * the left arm doesn't get a phantom pitch added to its walk swing. Layer
-         * overlays (sleeves, pants) follow the base part automatically via the
-         * applicator's post-application {@code copyFrom} pass.</p>
+         * <p>Any non-empty set enables this; the specific parts are not individually
+         * required for the yaw snap (the parameter is retained for API symmetry with the
+         * other part-scoped options and possible future per-part use). Passing the arm(s)
+         * the ability animates is the conventional, self-documenting choice.</p>
          *
-         * <h3>Which parts make sense</h3>
-         * <p>{@link CastBodyPart#RIGHT_ARM}, {@link CastBodyPart#LEFT_ARM},
-         * {@link CastBodyPart#RIGHT_LEG}, {@link CastBodyPart#LEFT_LEG} are the
-         * intended values. Passing {@link CastBodyPart#HEAD} is a no-op (the head
-         * pitches with the look in vanilla already, and double-pitching would over-rotate).
-         * Passing {@link CastBodyPart#BODY} is also a no-op — the player body never
-         * pitches in MC and adding pitch there would break the rig's anchor.</p>
+         * <p>This is a horizontal (yaw) alignment only. For vertical aim — tilting a limb
+         * up/down to match the look pitch — use {@link #followPlayerLook} instead; the two
+         * compose (yaw snap turns the body, look pitch tilts the limb).</p>
          */
         public Builder followPlayerBody(CastBodyPart... parts) {
             Collections.addAll(followPlayerBody, parts);
+            return this;
+        }
+
+        /**
+         * Pitches the given base parts (X-axis rotation about their own pivot) to match the
+         * player's vertical look angle, so the limb aims up or down with the camera. Use for
+         * abilities where the player should be able to hit a target above or below them —
+         * an extended arm tracks the crosshair's vertical angle while still reading as a
+         * natural arm motion.
+         *
+         * <h3>How it differs from {@link #followPlayerBody}</h3>
+         * <p>{@code followPlayerBody} is a one-shot horizontal body turn on activation;
+         * {@code followPlayerLook} is a continuous per-frame vertical tilt applied at render
+         * time. They're independent and combine naturally: body faces the target's
+         * compass direction, limb tilts to its elevation.</p>
+         *
+         * <h3>Scope and pivots</h3>
+         * <p>The pitch is applied around each part's anchor — for arms, the shoulder pivot
+         * (y=22 in the player rig), so the whole arm swings like aiming a gun rather than
+         * bending. {@link CastBodyPart#RIGHT_ARM} / {@link CastBodyPart#LEFT_ARM} are the
+         * intended values. {@link CastBodyPart#HEAD} is a no-op (the head already pitches
+         * with the look in vanilla); {@link CastBodyPart#BODY} is a no-op (the torso never
+         * pitches in MC). Legs are accepted but rarely useful.</p>
+         */
+        public Builder followPlayerLook(CastBodyPart... parts) {
+            Collections.addAll(followPlayerLook, parts);
             return this;
         }
 
@@ -310,6 +342,8 @@ public final class CastAnimationOptions {
                             : Collections.unmodifiableSet(EnumSet.copyOf(suppressVanillaAnimOn)),
                     followPlayerBody.isEmpty() ? Collections.emptySet()
                             : Collections.unmodifiableSet(EnumSet.copyOf(followPlayerBody)),
+                    followPlayerLook.isEmpty() ? Collections.emptySet()
+                            : Collections.unmodifiableSet(EnumSet.copyOf(followPlayerLook)),
                     hideBodyPart.isEmpty() ? Collections.emptySet()
                             : Collections.unmodifiableSet(EnumSet.copyOf(hideBodyPart)),
                     hideLayer.isEmpty() ? Collections.emptySet()

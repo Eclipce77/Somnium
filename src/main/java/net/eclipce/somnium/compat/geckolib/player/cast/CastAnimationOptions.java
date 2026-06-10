@@ -42,19 +42,22 @@ public final class CastAnimationOptions {
     private final Set<CastLayer>    hideLayer;
     private final boolean showInFirstPerson;
     private final boolean heldItemsShown;
+    private final int     animationLengthTicks;
 
     private CastAnimationOptions(Set<CastBodyPart> suppressVanillaAnimOn,
                                  Set<CastBodyPart> followPlayerBody,
                                  Set<CastBodyPart> hideBodyPart,
                                  Set<CastLayer>    hideLayer,
                                  boolean showInFirstPerson,
-                                 boolean heldItemsShown) {
+                                 boolean heldItemsShown,
+                                 int     animationLengthTicks) {
         this.suppressVanillaAnimOn = suppressVanillaAnimOn;
         this.followPlayerBody      = followPlayerBody;
         this.hideBodyPart          = hideBodyPart;
         this.hideLayer             = hideLayer;
         this.showInFirstPerson     = showInFirstPerson;
         this.heldItemsShown        = heldItemsShown;
+        this.animationLengthTicks  = animationLengthTicks;
     }
 
     // ─── Accessors ─────────────────────────────────────────────────────────────
@@ -97,6 +100,19 @@ public final class CastAnimationOptions {
      */
     public boolean heldItemsShown() { return heldItemsShown; }
 
+    /**
+     * Authored length of this animation in ticks, used by the applicator for elapsed-time
+     * completion detection. {@code <= 0} means "do not auto-finish" — i.e. a looping clip
+     * that is ended explicitly by triggering a different animation (the gatling loop uses
+     * this). Defaults to {@code 0}.
+     *
+     * <p>This exists because the cast system drives the GeckoLib processor manually, and in
+     * that path the controller's own PLAY_ONCE stop-transition never fires, so the animation
+     * would otherwise hold its final frame forever. The caller knows the authored duration
+     * (e.g. EXTEND_TICKS), so it passes it here.</p>
+     */
+    public int animationLengthTicks() { return animationLengthTicks; }
+
     public static Builder builder() { return new Builder(); }
 
     // ─── Network codec ─────────────────────────────────────────────────────────
@@ -124,7 +140,8 @@ public final class CastAnimationOptions {
                 readEnumSet(buf, CastBodyPart.class),
                 readEnumSet(buf, CastLayer.class),
                 buf.readBoolean(),
-                buf.readBoolean());
+                buf.readBoolean(),
+                buf.readVarInt());
     }
 
     /**
@@ -139,6 +156,7 @@ public final class CastAnimationOptions {
         writeEnumSet(buf, hideLayer);
         buf.writeBoolean(showInFirstPerson);
         buf.writeBoolean(heldItemsShown);
+        buf.writeVarInt(animationLengthTicks);
     }
 
     /**
@@ -182,6 +200,7 @@ public final class CastAnimationOptions {
         private final EnumSet<CastLayer>    hideLayer             = EnumSet.noneOf(CastLayer.class);
         private boolean showInFirstPerson = false;
         private boolean heldItemsShown    = true;
+        private int     animationLengthTicks = 0;
 
         private Builder() {}
 
@@ -268,6 +287,21 @@ public final class CastAnimationOptions {
             return this;
         }
 
+        /**
+         * Sets the authored length of this animation in ticks. The applicator finishes the
+         * animation (restoring suppress / hide / first-person state) once this many ticks
+         * have elapsed since it started. Pass the same tick count you authored the clip at
+         * (e.g. a 0.45s clip is 9 ticks).
+         *
+         * <p>Pass {@code 0} (the default) for a looping clip that should NOT auto-finish —
+         * the caller ends it by triggering a different animation. The gatling loop uses
+         * {@code 0}; its charge and retract pass their real lengths.</p>
+         */
+        public Builder animationLengthTicks(int ticks) {
+            this.animationLengthTicks = ticks;
+            return this;
+        }
+
         public CastAnimationOptions build() {
             // EnumSet copies preserve enum-iteration order and use a compact bitset
             // internally — cheap to construct, cheap to iterate.
@@ -281,7 +315,8 @@ public final class CastAnimationOptions {
                     hideLayer.isEmpty() ? Collections.emptySet()
                             : Collections.unmodifiableSet(EnumSet.copyOf(hideLayer)),
                     showInFirstPerson,
-                    heldItemsShown);
+                    heldItemsShown,
+                    animationLengthTicks);
         }
     }
 }

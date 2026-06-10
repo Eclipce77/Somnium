@@ -98,14 +98,14 @@ public abstract class PlayerModelSetupMixin {
         // (or vanilla setModelProperties) left them.
         if (net.eclipce.somnium.compat.geckolib.player.cast.SomniumFirstPersonRenderer
                 .RENDERING_OWN_PLAYER_IN_FIRST_PERSON.get()) {
-            self.head.visible = false;
-            self.hat.visible = false;
-            self.body.visible = false;
-            self.jacket.visible = false;
-            self.rightLeg.visible = false;
-            self.leftLeg.visible = false;
+            self.head.visible       = false;
+            self.hat.visible        = false;
+            self.body.visible       = false;
+            self.jacket.visible     = false;
+            self.rightLeg.visible   = false;
+            self.leftLeg.visible    = false;
             self.rightPants.visible = false;
-            self.leftPants.visible = false;
+            self.leftPants.visible  = false;
 
             // Show only the arm(s) the animation actually controls, rather than both
             // unconditionally. The suppressVanillaAnimOn set is the "this limb is in use"
@@ -118,16 +118,28 @@ public abstract class PlayerModelSetupMixin {
                     : CastAnimationOptions.DEFAULT;
             java.util.Set<CastBodyPart> inUse = fpOptions.suppressVanillaAnimOn();
             boolean showRight = inUse.contains(CastBodyPart.RIGHT_ARM);
-            boolean showLeft = inUse.contains(CastBodyPart.LEFT_ARM);
+            boolean showLeft  = inUse.contains(CastBodyPart.LEFT_ARM);
             if (!showRight && !showLeft) {
                 showRight = true;
-                showLeft = true;
+                showLeft  = true;
             }
 
             self.rightArm.visible = showRight;
-            self.rightSleeve.visible = showRight;
-            self.leftArm.visible = showLeft;
-            self.leftSleeve.visible = showLeft;
+            self.leftArm.visible  = showLeft;
+
+            // Sleeve visibility must respect hideLayer: a sleeve shows only if its arm is
+            // shown AND the animation did not request that sleeve hidden. Without the
+            // hideLayer check this line was overwriting the visible=false that
+            // applyHideOptions set inside apply(), which is exactly why sleeves that hide
+            // correctly in third person reappeared in the first-person re-render.
+            java.util.Set<net.eclipce.somnium.compat.geckolib.player.cast.CastLayer> hidden =
+                    fpOptions.hideLayer();
+            boolean hideRightSleeve =
+                    hidden.contains(net.eclipce.somnium.compat.geckolib.player.cast.CastLayer.RIGHT_SLEEVE);
+            boolean hideLeftSleeve =
+                    hidden.contains(net.eclipce.somnium.compat.geckolib.player.cast.CastLayer.LEFT_SLEEVE);
+            self.rightSleeve.visible = showRight && !hideRightSleeve;
+            self.leftSleeve.visible  = showLeft  && !hideLeftSleeve;
             // Held items render through ItemInHandLayer, which uses its own visibility
             // path (cancellable via heldItemsShown=false in the layer mixin).
         }

@@ -157,34 +157,54 @@ public final class SomniumCastBoneApplicator {
             model.getAnimationProcessor().tickAnimation(
                     animatable, model, mgr, frameTime, state, false);
 
-            // ── Bug 2 fix: auto-clear when the animation has ended ──
-            // Without this, currentOptions (including suppressVanillaAnimOn) stays active
-            // forever on the held last frame, and vanilla locomotion never resumes on
-            // suppressed parts. We use TWO signals because GeckoLib's controller
-            // represents "ended" differently depending on the animation's loop type:
+            // ── Completion detection ──
             //
-            //   PLAY_ONCE: when the animation completes, the controller clears its
-            //     currentAnimation field. hasAnimationFinished() returns false at that
-            //     point because its first guard is currentAnimation != null. So we
-            //     check both — currentAnimation == null OR tick past length.
+            // PRIMARY: elapsed-time check. Because we drive tickAnimation manually, the
+            // controller's own PLAY_ONCE stop-transition never fires — our predicate
+            // re-asserts the same RawAnimation every frame (setAndContinue), so from the
+            // controller's view the animation is perpetually "current". It interpolates to
+            // the final keyframe and holds there forever, and getCurrentAnimation() never
+            // goes null / hasAnimationFinished() never returns true. Diagnosed from a frame
+            // log: bone values reached the zeroed end pose at frame ~30 and apply() kept
+            // being called indefinitely with no "animation ended" ever printing.
             //
-            //   HOLD_ON_LAST_FRAME: tick clamps to length, currentAnimation stays set,
-            //     hasAnimationFinished() returns true. Caught by the second branch.
+            // So we time it ourselves. We know frameTime each frame and we stamp the start
+            // tick the frame the animation was consumed; when elapsed >= the baked
+            // animation length (in ticks), the PLAY_ONCE / HOLD animation is done.
             //
-            //   LOOP: tick wraps to 0 every cycle, hasAnimationFinished() always false,
-            //     currentAnimation stays set. Never caught — loops continue until
-            //     replaced by another triggerCastAnimation. This is the right behaviour
-            //     for loops; callers who want a loop to end must trigger a follow-up
-            //     animation (or, eventually, an explicit clear API).
-            //
-            // Tradeoff for HOLD: the held visual disappears at duration end alongside
-            // the suppress clearing. To keep a pose past the authored length, chain to
-            // a separate animation rather than rely on hold_on_last_frame alone.
+            // LOOP animations have loopType().shouldPlayAgain() == true; we never auto-finish
+            // those (matches prior behaviour — loops end only when replaced).
+            if (animatable.wasJustConsumed()) {
+                animatable.setAnimationStartTick(frameTime);
+                animatable.clearJustConsumed();
+            }
+
+            boolean ended = false;
+            String reason = null;
+
+            // Elapsed-time completion against the caller-supplied animation length (in
+            // ticks). We use a supplied length rather than reading it off the GeckoLib
+            // Animation object because the manual tick-driving path means the controller's
+            // own completion state never flips (see note above), and the length you author
+            // in the ability (EXTEND_TICKS etc.) is the authoritative duration anyway.
+            // A length of <= 0 means "loop / never auto-finish" (used for the gatling loop
+            // clip, which is ended explicitly by triggering the retract).
+            double startTick = animatable.getAnimationStartTick();
+            int lengthTicks = options.animationLengthTicks();
+            if (lengthTicks > 0 && startTick >= 0) {
+                double elapsed = frameTime - startTick;
+                if (elapsed >= lengthTicks) {
+                    ended = true;
+                    reason = "elapsed " + elapsed + " >= length " + lengthTicks + " ticks";
+                }
+            }
+
+            // FALLBACK: keep the controller-state checks too, in case a future change makes
+            // the controller transition on its own (then we finish promptly rather than
+            // waiting out the full length).
             software.bernie.geckolib.core.animation.AnimationController<SomniumCastAnimatable> controller =
                     mgr.getAnimationControllers().get("somnium_cast");
-            if (controller != null) {
-                boolean ended = false;
-                String reason = null;
+            if (!ended && controller != null) {
                 if (controller.getCurrentAnimation() == null) {
                     ended = true;
                     reason = "currentAnimation became null (PLAY_ONCE finished)";
@@ -192,15 +212,16 @@ public final class SomniumCastBoneApplicator {
                     ended = true;
                     reason = "hasAnimationFinished() (tick past length)";
                 }
-                if (ended) {
-                    System.out.println("[Somnium-DIAG] apply: animation ended — " + reason
-                            + " — clearing state");
-                    animatable.onAnimationFinished();
-                    // Skip the remaining apply steps; next frame's restorePreviouslyHidden
-                    // will re-show any layers/parts we hid, and the early-return at the top
-                    // of apply() will catch the now-null activeAnimation.
-                    return;
-                }
+            }
+
+            if (ended) {
+                System.out.println("[Somnium-DIAG] apply: animation ended — " + reason
+                        + " — clearing state");
+                animatable.onAnimationFinished();
+                // Skip the remaining apply steps; next frame's restorePreviouslyHidden
+                // will re-show any layers/parts we hid, and the early-return at the top
+                // of apply() will catch the now-null activeAnimation.
+                return;
             }
         } catch (Exception e) {
             System.out.println("[Somnium-DIAG] apply: tickAnimation THREW " + e);

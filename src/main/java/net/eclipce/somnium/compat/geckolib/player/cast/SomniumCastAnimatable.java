@@ -90,6 +90,26 @@ public class SomniumCastAnimatable implements GeoAnimatable {
      */
     private volatile boolean needsCleanupPass = false;
 
+    /**
+     * Render-tick timestamp at which the current animation became active, stamped by the
+     * applicator (which is the side that has the frameTime) on the frame it first sees a
+     * freshly-consumed animation. Used for elapsed-time completion detection: because we
+     * drive tickAnimation manually, the controller's own PLAY_ONCE stop-transition never
+     * fires (the predicate re-asserts the animation every frame), so the controller holds
+     * the last frame forever and never nulls currentAnimation. We instead compare elapsed
+     * render ticks against the baked animation length and finish it ourselves.
+     *
+     * <p>{@code -1} means "not yet stamped" — the applicator stamps it on the first frame
+     * after consumeQueue made an animation active.</p>
+     */
+    private volatile double animationStartTick = -1;
+
+    /**
+     * Set true by {@link #consumeQueue()} on any frame it promotes a queued animation to
+     * active, so the applicator knows to (re)stamp {@link #animationStartTick} this frame.
+     */
+    private volatile boolean justConsumed = false;
+
     private SomniumCastAnimatable(UUID playerUuid) {
         this.playerUuid = playerUuid;
         this.instanceId = NEXT_INSTANCE_ID.getAndIncrement();
@@ -177,6 +197,11 @@ public class SomniumCastAnimatable implements GeoAnimatable {
             activeModelId = QUEUED_MODEL.remove(playerUuid);
             CastAnimationOptions opt = QUEUED_OPTIONS.remove(playerUuid);
             currentOptions = opt != null ? opt : CastAnimationOptions.DEFAULT;
+            // Signal the applicator to (re)stamp the start tick this frame, and clear any
+            // pending cleanup from a prior animation — a new animation supersedes it.
+            justConsumed = true;
+            animationStartTick = -1;
+            needsCleanupPass = false;
             // Force the controller to restart on this new animation
             cache.getManagerForId(instanceId)
                     .getAnimationControllers()
@@ -190,6 +215,8 @@ public class SomniumCastAnimatable implements GeoAnimatable {
         activeAnimation = null;
         activeModelId = null;
         currentOptions = CastAnimationOptions.DEFAULT;
+        animationStartTick = -1;
+        justConsumed = false;
         // Force exactly one more apply() pass so the applicator can restore everything
         // this animation changed (suppress/hide/FP) on the very next frame, instead of
         // deferring teardown to whenever the next animation happens to arrive.
@@ -216,6 +243,18 @@ public class SomniumCastAnimatable implements GeoAnimatable {
 
     /** Cleared by the applicator once it has run the post-animation restore pass. */
     public void clearCleanupPass()    { needsCleanupPass = false; }
+
+    /** Render tick at which the active animation started, or -1 if not yet stamped. */
+    public double getAnimationStartTick() { return animationStartTick; }
+
+    /** Stamps the start tick for the active animation (called by the applicator). */
+    public void setAnimationStartTick(double tick) { this.animationStartTick = tick; }
+
+    /** True on the frame an animation was just promoted from the queue. */
+    public boolean wasJustConsumed() { return justConsumed; }
+
+    /** Cleared by the applicator after it has stamped the start tick. */
+    public void clearJustConsumed() { this.justConsumed = false; }
 
     // ─── GeoAnimatable ────────────────────────────────────────────────────────
 

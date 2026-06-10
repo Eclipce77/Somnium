@@ -70,6 +70,15 @@ public final class SomniumCastBoneApplicator {
         animatable.consumeQueue();
 
         if (animatable.getActiveAnimation() == null) {
+            // restorePreviouslyHidden (above) already re-showed any hidden parts and
+            // cleared the hidden sets. If a cleanup pass was pending — i.e. an animation
+            // just ended — THIS frame is that pass, so consume the flag. Nothing else to
+            // undo: vanilla setupAnim already wrote fresh locomotion poses to every part
+            // this frame, so parts that were under suppressVanillaAnimOn resume their
+            // vanilla motion automatically simply because we no longer call resetPose().
+            if (animatable.needsCleanupPass()) {
+                animatable.clearCleanupPass();
+            }
             return;
         }
 
@@ -258,7 +267,8 @@ public final class SomniumCastBoneApplicator {
         // body" intent. See applyFollowBody for the per-part rules and the layer-pair
         // expansion (arm pitches → sleeve also pitches via copyFrom downstream).
         if (!options.followPlayerBody().isEmpty()) {
-            applyFollowBody(playerModel, options.followPlayerBody(), animatedBones, vanillaHeadPitch);
+            applyFollowBody(playerModel, options.followPlayerBody(), animatedBones,
+                    options.suppressVanillaAnimOn(), vanillaHeadPitch);
         }
 
         // ── Sync skin-layer overlays to their base parts ──
@@ -493,6 +503,7 @@ public final class SomniumCastBoneApplicator {
     private static void applyFollowBody(PlayerModel<?> playerModel,
                                         java.util.Set<CastBodyPart> requestedParts,
                                         java.util.Set<String> animatedBones,
+                                        java.util.Set<CastBodyPart> suppressedParts,
                                         float pitch) {
         for (CastBodyPart part : requestedParts) {
             // Head/body are no-ops by design (see Javadoc). Skip silently so addon
@@ -500,10 +511,18 @@ public final class SomniumCastBoneApplicator {
             // things if they ever accidentally include head/body in the list.
             if (part == CastBodyPart.HEAD || part == CastBodyPart.BODY) continue;
 
-            // Only pitch parts the animation actually moved this frame. Pitching a
-            // limb the animation isn't touching would just tilt the vanilla walk
-            // swing, which is never what the addon wants.
-            if (!animatedBones.contains(part.partName())) continue;
+            // A part is eligible for pitch if the animation moved it this frame OR it is
+            // explicitly suppressed (the animation owns that limb's pose for the whole
+            // cast, even on frames where the keyframed delta momentarily rounds to zero).
+            //
+            // The suppressed check fixes the "up/down jerk at the end" reported on Pistol:
+            // as an animation winds down, a bone's delta can dip to exactly 0f for a frame,
+            // dropping it out of animatedBones; without this it would lose its pitch for
+            // that one frame and snap back the next, reading as a jerk. Suppressed limbs
+            // stay pitched smoothly across the whole extend+retract.
+            boolean eligible = animatedBones.contains(part.partName())
+                    || suppressedParts.contains(part);
+            if (!eligible) continue;
 
             part.get(playerModel).xRot += pitch;
         }

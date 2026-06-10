@@ -1,6 +1,8 @@
 package net.eclipce.somnium.compat.geckolib.mixin;
 
 import net.eclipce.somnium.compat.geckolib.GeckoLibCompat;
+import net.eclipce.somnium.compat.geckolib.player.cast.CastAnimationOptions;
+import net.eclipce.somnium.compat.geckolib.player.cast.CastBodyPart;
 import net.eclipce.somnium.compat.geckolib.player.cast.SomniumCastAnimatable;
 import net.eclipce.somnium.compat.geckolib.player.cast.SomniumCastBoneApplicator;
 import net.minecraft.client.model.HumanoidModel;
@@ -61,6 +63,7 @@ public abstract class PlayerModelSetupMixin {
         } else if (animatable.getActiveAnimation() == null
                 && animatable.getHiddenBodyParts().isEmpty()
                 && animatable.getHiddenLayers().isEmpty()
+                && !animatable.needsCleanupPass()
                 && !SomniumCastAnimatable.isActive(player.getUUID())) {
             return;
         }
@@ -95,15 +98,36 @@ public abstract class PlayerModelSetupMixin {
         // (or vanilla setModelProperties) left them.
         if (net.eclipce.somnium.compat.geckolib.player.cast.SomniumFirstPersonRenderer
                 .RENDERING_OWN_PLAYER_IN_FIRST_PERSON.get()) {
-            self.head.visible       = false;
-            self.hat.visible        = false;
-            self.body.visible       = false;
-            self.jacket.visible     = false;
-            self.rightLeg.visible   = false;
-            self.leftLeg.visible    = false;
+            self.head.visible = false;
+            self.hat.visible = false;
+            self.body.visible = false;
+            self.jacket.visible = false;
+            self.rightLeg.visible = false;
+            self.leftLeg.visible = false;
             self.rightPants.visible = false;
-            self.leftPants.visible  = false;
-            // Intentionally NOT touched: rightArm, leftArm, rightSleeve, leftSleeve.
+            self.leftPants.visible = false;
+
+            // Show only the arm(s) the animation actually controls, rather than both
+            // unconditionally. The suppressVanillaAnimOn set is the "this limb is in use"
+            // signal: an animation that owns an arm's pose suppresses vanilla on it. If
+            // neither arm is suppressed (e.g. an additive animation that drives arms
+            // without suppressing, or DEFAULT options), fall back to showing both so we
+            // never hide an arm the animation is in fact moving.
+            CastAnimationOptions fpOptions = (animatable != null)
+                    ? animatable.getCurrentOptions()
+                    : CastAnimationOptions.DEFAULT;
+            java.util.Set<CastBodyPart> inUse = fpOptions.suppressVanillaAnimOn();
+            boolean showRight = inUse.contains(CastBodyPart.RIGHT_ARM);
+            boolean showLeft = inUse.contains(CastBodyPart.LEFT_ARM);
+            if (!showRight && !showLeft) {
+                showRight = true;
+                showLeft = true;
+            }
+
+            self.rightArm.visible = showRight;
+            self.rightSleeve.visible = showRight;
+            self.leftArm.visible = showLeft;
+            self.leftSleeve.visible = showLeft;
             // Held items render through ItemInHandLayer, which uses its own visibility
             // path (cancellable via heldItemsShown=false in the layer mixin).
         }

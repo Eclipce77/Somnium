@@ -76,6 +76,20 @@ public class SomniumCastAnimatable implements GeoAnimatable {
     @Nullable private String cachedAnimName = null;
     @Nullable private RawAnimation cachedRawAnimation = null;
 
+    /**
+     * Set true by {@link #onAnimationFinished()} so the applicator runs ONE more full
+     * pass to restore suppressed/hidden/first-person state, then clears it via
+     * {@link #clearCleanupPass()}.
+     *
+     * <p>Without this, the {@code PlayerModelSetupMixin} guard stops calling
+     * {@code apply()} the instant {@code activeAnimation} goes null — leaving suppressed
+     * limbs frozen on their last pose and hidden layers / first-person arms stuck until
+     * some unrelated later animation re-enters the loop. That late, lazy teardown was the
+     * shared root cause behind the "only fixes itself when another ability runs" cycle on
+     * suppressVanillaAnimOn, hideLayer, and showInFirstPerson.</p>
+     */
+    private volatile boolean needsCleanupPass = false;
+
     private SomniumCastAnimatable(UUID playerUuid) {
         this.playerUuid = playerUuid;
         this.instanceId = NEXT_INSTANCE_ID.getAndIncrement();
@@ -176,6 +190,10 @@ public class SomniumCastAnimatable implements GeoAnimatable {
         activeAnimation = null;
         activeModelId = null;
         currentOptions = CastAnimationOptions.DEFAULT;
+        // Force exactly one more apply() pass so the applicator can restore everything
+        // this animation changed (suppress/hide/FP) on the very next frame, instead of
+        // deferring teardown to whenever the next animation happens to arrive.
+        needsCleanupPass = true;
         // hiddenBodyParts / hiddenLayers are intentionally NOT cleared here — the
         // applicator restores those parts on its next call by reading them and
         // setting visible=true. Clearing here would leave the parts stuck invisible
@@ -192,6 +210,12 @@ public class SomniumCastAnimatable implements GeoAnimatable {
     public CastAnimationOptions getCurrentOptions()      { return currentOptions; }
     public java.util.Set<CastBodyPart> getHiddenBodyParts() { return hiddenBodyParts; }
     public java.util.Set<CastLayer>    getHiddenLayers()    { return hiddenLayers; }
+
+    /** True when a finished animation still owes the applicator one restore pass. */
+    public boolean needsCleanupPass() { return needsCleanupPass; }
+
+    /** Cleared by the applicator once it has run the post-animation restore pass. */
+    public void clearCleanupPass()    { needsCleanupPass = false; }
 
     // ─── GeoAnimatable ────────────────────────────────────────────────────────
 

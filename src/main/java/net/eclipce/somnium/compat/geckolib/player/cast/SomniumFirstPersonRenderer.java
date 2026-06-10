@@ -88,6 +88,26 @@ public final class SomniumFirstPersonRenderer {
             ThreadLocal.withInitial(() -> Boolean.FALSE);
 
     /**
+     * Client render tick (game time) through which vanilla first-person hands should remain
+     * suppressed even if no cast animation is currently active. Armed each frame a
+     * {@code showInFirstPerson} animation is live, and read by {@link #onRenderHand}.
+     *
+     * <p>Why this exists: completion is detected client-side by elapsed time, but the
+     * follow-up animation (e.g. Pistol's retract) is triggered server-side and arrives a
+     * round-trip later. In the gap, {@code getActiveAnimation()} is briefly null, so without
+     * this grace {@code onRenderHand} would stop cancelling and vanilla's screen-space hand
+     * would flash across the screen for a frame at the extend→retract seam.</p>
+     *
+     * <p>Erring slightly long here is safe: suppressing vanilla hands for a few extra frames
+     * when nothing is animating shows nothing wrong (there's no FP arm to miss), whereas
+     * suppressing a frame too few shows the artifact. {@code 0} means "not armed".</p>
+     */
+    private static long suppressVanillaHandsUntilTick = 0L;
+
+    /** Frames of grace after an FP cast ends, to bridge the client/server retrigger seam. */
+    private static final long FP_HAND_GRACE_TICKS = 3L;
+
+    /**
      * Renders the local player at their world position after the level's entities
      * are drawn. Only runs in first-person camera mode with an active cast animation
      * that has {@code showInFirstPerson=true}.
@@ -112,6 +132,14 @@ public final class SomniumFirstPersonRenderer {
 
         CastAnimationOptions options = animatable.getCurrentOptions();
         if (!options.showInFirstPerson()) return;
+
+        // Arm the vanilla-hand suppression grace: as long as this FP cast is live, keep
+        // vanilla hands suppressed for a few frames PAST the point the animation ends, so
+        // the client/server retrigger seam (extend→retract) doesn't flash a vanilla hand.
+        if (Minecraft.getInstance().level != null) {
+            suppressVanillaHandsUntilTick =
+                    Minecraft.getInstance().level.getGameTime() + FP_HAND_GRACE_TICKS;
+        }
 
         // Resolve the player renderer (always a PlayerRenderer for AbstractClientPlayer)
         EntityRenderer<? super AbstractClientPlayer> renderer =
@@ -179,6 +207,17 @@ public final class SomniumFirstPersonRenderer {
         if (player == null) return;
 
         SomniumCastAnimatable animatable = SomniumCastAnimatable.getOrNull(player.getUUID());
+
+        // Grace bridge: even with no active animation, keep suppressing vanilla hands for a
+        // few frames after an FP cast ends, so the brief gap before the next animation
+        // (e.g. Pistol's server-triggered retract) arrives doesn't flash the vanilla
+        // screen-space hand across the view.
+        if (Minecraft.getInstance().level != null
+                && Minecraft.getInstance().level.getGameTime() < suppressVanillaHandsUntilTick) {
+            event.setCanceled(true);
+            return;
+        }
+
         if (animatable == null) return;
         if (animatable.getActiveAnimation() == null) return;
 

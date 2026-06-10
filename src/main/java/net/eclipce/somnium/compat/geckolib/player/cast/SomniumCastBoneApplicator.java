@@ -545,7 +545,14 @@ public final class SomniumCastBoneApplicator {
                     || suppressedParts.contains(part);
             if (!eligible) continue;
 
-            part.get(playerModel).xRot += pitch;
+            // Sign: vanilla head.xRot is NEGATIVE when looking up. The cast arm is
+            // keyframed extending forward, where a POSITIVE xRot delta swings the hand
+            // downward (toward the legs). So to make a forward arm track the look, we
+            // SUBTRACT the head pitch: looking up (negative head pitch) must raise the arm
+            // (negative arm-xRot contribution → hand goes up). Adding it instead — the
+            // previous behaviour — dropped the arm below the look line when aiming up/down,
+            // which is the "animation pulled downward" artifact.
+            part.get(playerModel).xRot -= pitch;
         }
     }
 

@@ -484,23 +484,28 @@ public final class SomniumCastBoneApplicator {
     }
 
     // onExecuteBodyAlign is handled entirely server-side at execution (see
-    // SomniumAnimHelper.triggerCastAnimation) — it snaps body yaw and needs no render code.
-
-    /** Maximum up/down tilt, in degrees, that changeDirectionOnLook will apply. The captured
-     *  look pitch is clamped to ±this so steep look angles don't over-rotate the limb. */
-    private static final float MAX_LOOK_TILT_DEGREES = 25f;
+    // SomniumAnimHelper.triggerCastAnimation) — it re-faces the player and needs no render
+    // code. It handles the HORIZONTAL (yaw) component of aiming; applyDirectionOnLook below
+    // handles the VERTICAL (pitch) component, and the two together make the limb point
+    // exactly where the player is looking.
 
     /**
-     * Applies a mild, clamped X-axis tilt to the requested parts toward the execution-time
-     * look pitch. This is the {@code changeDirectionOnLook} option: it lets an aimable limb
-     * point at a target above or below the player without the over-rotation of a 1:1 mapping.
+     * Tilts the requested parts on the X axis to match the player's execution-time look
+     * pitch 1:1, so the limb points precisely at the look elevation. This is the
+     * {@code changeDirectionOnLook} option.
      *
-     * <h3>Clamp and sign</h3>
-     * <p>{@code capturedLookPitch} is in degrees, positive when the player was looking down.
-     * It is clamped to {@code ±MAX_LOOK_TILT_DEGREES} then converted to radians and added to
-     * each part's {@code xRot}. A vanilla arm's {@code xRot} increases to swing the hand
-     * downward, so adding a positive (look-down) pitch tilts the limb down, and a negative
-     * (look-up) pitch tilts it up — matching the player's intent.</p>
+     * <h3>Why 1:1 (not clamped/scaled)</h3>
+     * <p>An earlier version scaled/clamped this to avoid "over-rotation," but that made the
+     * limb point at a different angle than the player was actually looking — imprecise, and
+     * the whole point of the option is precision. With {@code onExecuteBodyAlign} now
+     * genuinely re-facing the body to the look yaw, this method only needs to supply the
+     * vertical component, applied at full strength so the limb's elevation matches the
+     * crosshair exactly.</p>
+     *
+     * <h3>Sign</h3>
+     * <p>{@code capturedLookPitch} is degrees, positive looking down. A vanilla arm's
+     * {@code xRot} increases to swing the hand downward, so adding the pitch directly tilts
+     * the limb down when looking down and up when looking up — matching intent.</p>
      *
      * <h3>Scope</h3>
      * <p>HEAD and BODY are skipped (head already pitches in vanilla; torso never pitches).
@@ -510,9 +515,7 @@ public final class SomniumCastBoneApplicator {
     private static void applyDirectionOnLook(PlayerModel<?> playerModel,
                                              java.util.Set<CastBodyPart> requestedParts,
                                              float capturedLookPitchDegrees) {
-        float clampedDeg = Math.max(-MAX_LOOK_TILT_DEGREES,
-                Math.min(MAX_LOOK_TILT_DEGREES, capturedLookPitchDegrees));
-        float tiltRad = (float) Math.toRadians(clampedDeg);
+        float tiltRad = (float) Math.toRadians(capturedLookPitchDegrees);
 
         for (CastBodyPart part : requestedParts) {
             if (part == CastBodyPart.HEAD || part == CastBodyPart.BODY) continue;

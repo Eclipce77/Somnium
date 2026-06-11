@@ -268,25 +268,25 @@ public final class SomniumCastBoneApplicator {
         }
 
         // Apply bones — track which received a non-zero delta. (animatedBones is retained
-        // for potential future per-bone option scoping; followPlayerBody no longer uses it
-        // — that flag now triggers a server-side body-yaw snap on activation instead of a
-        // render-time arm pitch. See SomniumAnimHelper.triggerCastAnimation.)
+        // for potential future per-bone option scoping; it is not currently consumed —
+        // onExecuteBodyAlign is a server-side yaw snap and changeDirectionOnLook applies to
+        // its explicitly-listed parts regardless of per-frame delta.)
         java.util.Set<String> animatedBones = new java.util.HashSet<>();
         applyAllBones(bakedModel, playerModel, animatedBones);
 
-        // ── followPlayerLook ──
-        // Pitch the requested base parts to match the player's vertical look angle, so the
-        // limb aims up/down with the camera. Applied after applyAllBones (on top of the
-        // animation pose) and BEFORE syncLayersFromBaseParts, so the sleeve/pant overlay
-        // copies the pitched arm/leg and tracks it without separate handling.
-        if (!options.followPlayerLook().isEmpty()) {
-            applyFollowLook(playerModel, options.followPlayerLook(), player);
+        // ── changeDirectionOnLook ──
+        // Apply a mild, clamped up/down tilt toward the execution-time look pitch (frozen in
+        // the options, not re-read here). After applyAllBones (on top of the animation pose)
+        // and BEFORE syncLayersFromBaseParts so the sleeve/pant overlay copies the tilt.
+        if (!options.changeDirectionOnLook().isEmpty()) {
+            applyDirectionOnLook(playerModel, options.changeDirectionOnLook(),
+                    options.capturedLookPitch());
         }
 
         // ── Sync skin-layer overlays to their base parts ──
         // PlayerModel.setupAnim ends with a series of copyFrom calls that align each
         // layer (sleeves, pants, hat, jacket) with its base part (arms, legs, head, body).
-        // We've since mutated the base parts (suppress, applyAllBones, followPlayerBody)
+        // We've since mutated the base parts (suppress, applyAllBones, changeDirectionOnLook)
         // without touching the layers, so they now hold the stale vanilla pose. A second
         // copyFrom pass here re-anchors each layer to whatever its base part finally
         // settled on — without this, e.g. the right sleeve would visibly trail the
@@ -483,43 +483,40 @@ public final class SomniumCastBoneApplicator {
         }
     }
 
-    // followPlayerBody was previously a render-time per-bone pitch applied here via an
-    // applyFollowBody() helper. It has been replaced by a server-side body-yaw snap on
-    // activation (see SomniumAnimHelper.triggerCastAnimation), which faces the whole rig
-    // where the player is looking. Vertical aim is now a separate, explicit option —
-    // followPlayerLook — implemented by applyFollowLook below.
+    // onExecuteBodyAlign is handled entirely server-side at execution (see
+    // SomniumAnimHelper.triggerCastAnimation) — it snaps body yaw and needs no render code.
+
+    /** Maximum up/down tilt, in degrees, that changeDirectionOnLook will apply. The captured
+     *  look pitch is clamped to ±this so steep look angles don't over-rotate the limb. */
+    private static final float MAX_LOOK_TILT_DEGREES = 25f;
 
     /**
-     * Pitches each requested base part to match the player's vertical look angle, rotating
-     * the part about its own pivot (shoulder for arms). This is the {@code followPlayerLook}
-     * option: it lets an aimable limb track a target above or below the player.
+     * Applies a mild, clamped X-axis tilt to the requested parts toward the execution-time
+     * look pitch. This is the {@code changeDirectionOnLook} option: it lets an aimable limb
+     * point at a target above or below the player without the over-rotation of a 1:1 mapping.
      *
-     * <h3>Sign convention</h3>
-     * <p>{@code player.getXRot()} is POSITIVE when looking down and NEGATIVE when looking
-     * up. A vanilla arm's {@code xRot} increases to swing the hand downward about the
-     * shoulder. So aiming down (positive look pitch) needs a positive {@code xRot} delta,
-     * and aiming up (negative look pitch) a negative one — i.e. we ADD the look pitch (in
-     * radians) directly. This is applied additively on top of whatever pose the animation
-     * produced, so the limb keeps its animated character while gaining vertical aim.</p>
+     * <h3>Clamp and sign</h3>
+     * <p>{@code capturedLookPitch} is in degrees, positive when the player was looking down.
+     * It is clamped to {@code ±MAX_LOOK_TILT_DEGREES} then converted to radians and added to
+     * each part's {@code xRot}. A vanilla arm's {@code xRot} increases to swing the hand
+     * downward, so adding a positive (look-down) pitch tilts the limb down, and a negative
+     * (look-up) pitch tilts it up — matching the player's intent.</p>
      *
      * <h3>Scope</h3>
-     * <p>HEAD and BODY are skipped: the head already pitches with the look in vanilla, and
-     * the torso never pitches. Arms are the intended targets; legs are permitted but rarely
-     * meaningful. Layer overlays are NOT touched here — the post-call
-     * {@code syncLayersFromBaseParts} copies the pitched base part onto its overlay.</p>
+     * <p>HEAD and BODY are skipped (head already pitches in vanilla; torso never pitches).
+     * Layer overlays are not touched here — {@code syncLayersFromBaseParts} copies the tilted
+     * base part onto its overlay afterward.</p>
      */
-    private static void applyFollowLook(PlayerModel<?> playerModel,
-                                        java.util.Set<CastBodyPart> requestedParts,
-                                        Player player) {
-        // getXRot() is the player's current pitch in degrees (positive = looking down).
-        // We use the current value rather than a partial-tick-interpolated one: at render
-        // time it's accurate to within a tick, which is imperceptible for arm aim, and it
-        // avoids depending on the interpolated-getter name. Convert to radians for xRot.
-        float lookPitchRad = (float) Math.toRadians(player.getXRot());
+    private static void applyDirectionOnLook(PlayerModel<?> playerModel,
+                                             java.util.Set<CastBodyPart> requestedParts,
+                                             float capturedLookPitchDegrees) {
+        float clampedDeg = Math.max(-MAX_LOOK_TILT_DEGREES,
+                Math.min(MAX_LOOK_TILT_DEGREES, capturedLookPitchDegrees));
+        float tiltRad = (float) Math.toRadians(clampedDeg);
 
         for (CastBodyPart part : requestedParts) {
             if (part == CastBodyPart.HEAD || part == CastBodyPart.BODY) continue;
-            part.get(playerModel).xRot += lookPitchRad;
+            part.get(playerModel).xRot += tiltRad;
         }
     }
 

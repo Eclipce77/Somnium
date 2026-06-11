@@ -15,17 +15,18 @@ import java.util.Set;
  * blends additively onto whatever vanilla locomotion is doing.</p>
  *
  * <h3>Migration notes (this revision)</h3>
- * <p>All part-name parameters are now strict {@link CastBodyPart} / {@link CastLayer}
- * enums instead of free-form strings. The IDE's autocomplete handles validation —
- * typos are syntactically impossible. {@code followPlayerLook} was replaced with
- * {@link Builder#followPlayerBody} which takes specific parts; see that method for
- * the rationale.</p>
+ * <p>{@code followPlayerBody} (a body-yaw snap keyed off a part set) is now
+ * {@link Builder#onExecuteBodyAlign} (a plain boolean), and {@code followPlayerLook}
+ * (a live per-frame 1:1 look pitch) is now {@link Builder#changeDirectionOnLook} (a mild,
+ * clamped tilt locked to the look pitch at execution). All part-name parameters are strict
+ * {@link CastBodyPart} / {@link CastLayer} enums.</p>
  *
  * <h3>Usage</h3>
  * <pre>{@code
  * CastAnimationOptions.builder()
  *     .suppressVanillaAnimOn(CastBodyPart.RIGHT_ARM, CastBodyPart.LEFT_ARM)
- *     .followPlayerBody(CastBodyPart.RIGHT_ARM)
+ *     .onExecuteBodyAlign(true)
+ *     .changeDirectionOnLook(CastBodyPart.RIGHT_ARM)
  *     .hideLayer(CastLayer.RIGHT_SLEEVE, CastLayer.LEFT_SLEEVE)
  *     .showInFirstPerson(true)
  *     .build();
@@ -37,30 +38,60 @@ public final class CastAnimationOptions {
     public static final CastAnimationOptions DEFAULT = new Builder().build();
 
     private final Set<CastBodyPart> suppressVanillaAnimOn;
-    private final Set<CastBodyPart> followPlayerBody;
-    private final Set<CastBodyPart> followPlayerLook;
+    private final boolean           onExecuteBodyAlign;
+    private final Set<CastBodyPart> changeDirectionOnLook;
     private final Set<CastBodyPart> hideBodyPart;
     private final Set<CastLayer>    hideLayer;
     private final boolean showInFirstPerson;
     private final boolean heldItemsShown;
     private final int     animationLengthTicks;
+    /**
+     * Look pitch (degrees) captured server-side at execution and frozen for the life of
+     * this animation. Used by {@code changeDirectionOnLook}: the tilt is locked to where the
+     * player was looking when the ability fired, not re-read each frame. {@code 0} when
+     * changeDirectionOnLook is unused. Stamped via {@link #withCapturedLookPitch(float)}.
+     */
+    private final float capturedLookPitch;
 
     private CastAnimationOptions(Set<CastBodyPart> suppressVanillaAnimOn,
-                                 Set<CastBodyPart> followPlayerBody,
-                                 Set<CastBodyPart> followPlayerLook,
+                                 boolean           onExecuteBodyAlign,
+                                 Set<CastBodyPart> changeDirectionOnLook,
                                  Set<CastBodyPart> hideBodyPart,
                                  Set<CastLayer>    hideLayer,
                                  boolean showInFirstPerson,
                                  boolean heldItemsShown,
-                                 int     animationLengthTicks) {
-        this.suppressVanillaAnimOn = suppressVanillaAnimOn;
-        this.followPlayerBody      = followPlayerBody;
-        this.followPlayerLook      = followPlayerLook;
-        this.hideBodyPart          = hideBodyPart;
-        this.hideLayer             = hideLayer;
-        this.showInFirstPerson     = showInFirstPerson;
-        this.heldItemsShown        = heldItemsShown;
+                                 int     animationLengthTicks,
+                                 float   capturedLookPitch) {
+        this.suppressVanillaAnimOn  = suppressVanillaAnimOn;
+        this.onExecuteBodyAlign     = onExecuteBodyAlign;
+        this.changeDirectionOnLook  = changeDirectionOnLook;
+        this.hideBodyPart           = hideBodyPart;
+        this.hideLayer              = hideLayer;
+        this.showInFirstPerson      = showInFirstPerson;
+        this.heldItemsShown         = heldItemsShown;
         this.animationLengthTicks  = animationLengthTicks;
+        this.capturedLookPitch      = capturedLookPitch;
+    }
+
+    /**
+     * Returns a copy of these options with the look pitch (degrees) frozen in. Called
+     * server-side from {@code SomniumAnimHelper.triggerCastAnimation} at the moment the
+     * ability fires, so {@code changeDirectionOnLook} locks to the player's look at
+     * execution time rather than tracking it live each frame. All other fields are carried
+     * over unchanged (the immutable sets are reused, not copied — they're already
+     * unmodifiable).
+     */
+    public CastAnimationOptions withCapturedLookPitch(float pitchDegrees) {
+        return new CastAnimationOptions(
+                suppressVanillaAnimOn,
+                onExecuteBodyAlign,
+                changeDirectionOnLook,
+                hideBodyPart,
+                hideLayer,
+                showInFirstPerson,
+                heldItemsShown,
+                animationLengthTicks,
+                pitchDegrees);
     }
 
     // ─── Accessors ─────────────────────────────────────────────────────────────
@@ -74,20 +105,22 @@ public final class CastAnimationOptions {
     public Set<CastBodyPart> suppressVanillaAnimOn() { return suppressVanillaAnimOn; }
 
     /**
-     * The presence of any part here flags the ability as body-aiming: on activation the
-     * server snaps the player's body yaw to their look direction so the whole rig faces
-     * where they're aiming. (The specific parts are not individually meaningful for the
-     * yaw snap — a non-empty set is the trigger. The set type is kept as CastBodyPart for
-     * API symmetry and forward use.) See {@link Builder#followPlayerBody}.
+     * If {@code true}, the server snaps the player's body yaw to their look direction at the
+     * instant the ability executes, so the whole rig faces exactly where they're aiming.
+     * See {@link Builder#onExecuteBodyAlign}.
      */
-    public Set<CastBodyPart> followPlayerBody() { return followPlayerBody; }
+    public boolean onExecuteBodyAlign() { return onExecuteBodyAlign; }
 
     /**
-     * Base parts that should pitch (X-axis) to match the player's vertical look angle, so
-     * the limb aims up/down with the camera. Applied at render time around each part's
-     * own pivot (the shoulder, for arms). See {@link Builder#followPlayerLook}.
+     * Base parts that get a mild, clamped up/down (X-axis) tilt toward where the player was
+     * looking when the ability fired, so the limb aims at the intended target without the
+     * over-rotation of a 1:1 look mapping. The pitch is locked at execution (see
+     * {@link #capturedLookPitch()}). See {@link Builder#changeDirectionOnLook}.
      */
-    public Set<CastBodyPart> followPlayerLook() { return followPlayerLook; }
+    public Set<CastBodyPart> changeDirectionOnLook() { return changeDirectionOnLook; }
+
+    /** The execution-time look pitch (degrees) used by {@link #changeDirectionOnLook()}. */
+    public float capturedLookPitch() { return capturedLookPitch; }
 
     /** Base parts to hide for the duration of the animation. */
     public Set<CastBodyPart> hideBodyPart() { return hideBodyPart; }
@@ -147,13 +180,14 @@ public final class CastAnimationOptions {
     public static CastAnimationOptions read(FriendlyByteBuf buf) {
         return new CastAnimationOptions(
                 readEnumSet(buf, CastBodyPart.class),
-                readEnumSet(buf, CastBodyPart.class),
+                buf.readBoolean(),
                 readEnumSet(buf, CastBodyPart.class),
                 readEnumSet(buf, CastBodyPart.class),
                 readEnumSet(buf, CastLayer.class),
                 buf.readBoolean(),
                 buf.readBoolean(),
-                buf.readVarInt());
+                buf.readVarInt(),
+                buf.readFloat());
     }
 
     /**
@@ -163,13 +197,14 @@ public final class CastAnimationOptions {
      */
     public void write(FriendlyByteBuf buf) {
         writeEnumSet(buf, suppressVanillaAnimOn);
-        writeEnumSet(buf, followPlayerBody);
-        writeEnumSet(buf, followPlayerLook);
+        buf.writeBoolean(onExecuteBodyAlign);
+        writeEnumSet(buf, changeDirectionOnLook);
         writeEnumSet(buf, hideBodyPart);
         writeEnumSet(buf, hideLayer);
         buf.writeBoolean(showInFirstPerson);
         buf.writeBoolean(heldItemsShown);
         buf.writeVarInt(animationLengthTicks);
+        buf.writeFloat(capturedLookPitch);
     }
 
     /**
@@ -208,8 +243,8 @@ public final class CastAnimationOptions {
 
     public static final class Builder {
         private final EnumSet<CastBodyPart> suppressVanillaAnimOn = EnumSet.noneOf(CastBodyPart.class);
-        private final EnumSet<CastBodyPart> followPlayerBody      = EnumSet.noneOf(CastBodyPart.class);
-        private final EnumSet<CastBodyPart> followPlayerLook      = EnumSet.noneOf(CastBodyPart.class);
+        private boolean                     onExecuteBodyAlign    = false;
+        private final EnumSet<CastBodyPart> changeDirectionOnLook = EnumSet.noneOf(CastBodyPart.class);
         private final EnumSet<CastBodyPart> hideBodyPart          = EnumSet.noneOf(CastBodyPart.class);
         private final EnumSet<CastLayer>    hideLayer             = EnumSet.noneOf(CastLayer.class);
         private boolean showInFirstPerson = false;
@@ -234,48 +269,42 @@ public final class CastAnimationOptions {
         }
 
         /**
-         * Marks this ability as body-aiming: when triggered, the server snaps the player's
-         * body yaw to their current look direction, so the whole rig turns to face where
-         * they're aiming and it's obvious to the player where the ability will go. If the
-         * body and look are already aligned (within ~1°), it does nothing.
+         * When {@code true}, the player's body yaw is instantly snapped to their current
+         * look direction at the moment the ability executes, so the whole rig faces exactly
+         * where they're aiming and the ability goes precisely where intended. The change is
+         * server-side and persists (other players see it); if the body and look are already
+         * aligned it does nothing.
          *
-         * <p>Any non-empty set enables this; the specific parts are not individually
-         * required for the yaw snap (the parameter is retained for API symmetry with the
-         * other part-scoped options and possible future per-part use). Passing the arm(s)
-         * the ability animates is the conventional, self-documenting choice.</p>
-         *
-         * <p>This is a horizontal (yaw) alignment only. For vertical aim — tilting a limb
-         * up/down to match the look pitch — use {@link #followPlayerLook} instead; the two
-         * compose (yaw snap turns the body, look pitch tilts the limb).</p>
+         * <p>This is a horizontal (yaw) alignment. For vertical aim — tilting a limb up/down
+         * toward the target — combine with {@link #changeDirectionOnLook}.</p>
          */
-        public Builder followPlayerBody(CastBodyPart... parts) {
-            Collections.addAll(followPlayerBody, parts);
+        public Builder onExecuteBodyAlign(boolean value) {
+            this.onExecuteBodyAlign = value;
             return this;
         }
 
         /**
-         * Pitches the given base parts (X-axis rotation about their own pivot) to match the
-         * player's vertical look angle, so the limb aims up or down with the camera. Use for
-         * abilities where the player should be able to hit a target above or below them —
-         * an extended arm tracks the crosshair's vertical angle while still reading as a
-         * natural arm motion.
+         * Gives the listed base parts a mild, clamped up/down tilt (X-axis rotation about
+         * their pivot) toward where the player was looking when the ability fired, so an
+         * aimable limb points at a target above or below the player.
          *
-         * <h3>How it differs from {@link #followPlayerBody}</h3>
-         * <p>{@code followPlayerBody} is a one-shot horizontal body turn on activation;
-         * {@code followPlayerLook} is a continuous per-frame vertical tilt applied at render
-         * time. They're independent and combine naturally: body faces the target's
-         * compass direction, limb tilts to its elevation.</p>
+         * <h3>Why mild + clamped</h3>
+         * <p>Applying the full look pitch 1:1 over-rotates the limb at steep angles (a 60°
+         * downward look would dump 60° onto the arm, swinging it far past anything natural).
+         * Instead the captured pitch is clamped to a maximum tilt, so the limb reads as
+         * aiming up or down without breaking the animation's pose.</p>
          *
-         * <h3>Scope and pivots</h3>
-         * <p>The pitch is applied around each part's anchor — for arms, the shoulder pivot
-         * (y=22 in the player rig), so the whole arm swings like aiming a gun rather than
-         * bending. {@link CastBodyPart#RIGHT_ARM} / {@link CastBodyPart#LEFT_ARM} are the
-         * intended values. {@link CastBodyPart#HEAD} is a no-op (the head already pitches
-         * with the look in vanilla); {@link CastBodyPart#BODY} is a no-op (the torso never
-         * pitches in MC). Legs are accepted but rarely useful.</p>
+         * <h3>Locked at execution</h3>
+         * <p>The pitch is captured server-side once, when the ability fires, and frozen for
+         * the animation — it does not re-aim if the player moves the camera mid-cast. This
+         * keeps the motion deterministic and identical on every client.</p>
+         *
+         * <h3>Scope</h3>
+         * <p>{@link CastBodyPart#RIGHT_ARM} / {@link CastBodyPart#LEFT_ARM} are the intended
+         * targets. {@link CastBodyPart#HEAD} and {@link CastBodyPart#BODY} are no-ops.</p>
          */
-        public Builder followPlayerLook(CastBodyPart... parts) {
-            Collections.addAll(followPlayerLook, parts);
+        public Builder changeDirectionOnLook(CastBodyPart... parts) {
+            Collections.addAll(changeDirectionOnLook, parts);
             return this;
         }
 
@@ -340,17 +369,17 @@ public final class CastAnimationOptions {
             return new CastAnimationOptions(
                     suppressVanillaAnimOn.isEmpty() ? Collections.emptySet()
                             : Collections.unmodifiableSet(EnumSet.copyOf(suppressVanillaAnimOn)),
-                    followPlayerBody.isEmpty() ? Collections.emptySet()
-                            : Collections.unmodifiableSet(EnumSet.copyOf(followPlayerBody)),
-                    followPlayerLook.isEmpty() ? Collections.emptySet()
-                            : Collections.unmodifiableSet(EnumSet.copyOf(followPlayerLook)),
+                    onExecuteBodyAlign,
+                    changeDirectionOnLook.isEmpty() ? Collections.emptySet()
+                            : Collections.unmodifiableSet(EnumSet.copyOf(changeDirectionOnLook)),
                     hideBodyPart.isEmpty() ? Collections.emptySet()
                             : Collections.unmodifiableSet(EnumSet.copyOf(hideBodyPart)),
                     hideLayer.isEmpty() ? Collections.emptySet()
                             : Collections.unmodifiableSet(EnumSet.copyOf(hideLayer)),
                     showInFirstPerson,
                     heldItemsShown,
-                    animationLengthTicks);
+                    animationLengthTicks,
+                    0f); // capturedLookPitch is stamped later, server-side, at execution
         }
     }
 }

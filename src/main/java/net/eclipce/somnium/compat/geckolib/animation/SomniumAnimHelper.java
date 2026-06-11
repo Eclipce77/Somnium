@@ -165,7 +165,7 @@ public final class SomniumAnimHelper {
      * SomniumAnimHelper.triggerCastAnimation(player, "pistol_extend", GOMU_CAST_MODEL,
      *     CastAnimationOptions.builder()
      *         .suppressVanillaAnimOn(CastBodyPart.RIGHT_ARM)
-     *         .followPlayerBody(CastBodyPart.RIGHT_ARM)
+     *         .onExecuteBodyAlign(true)
      *         .hideLayer(CastLayer.RIGHT_SLEEVE)
      *         .showInFirstPerson(true)
      *         .build());
@@ -188,6 +188,34 @@ public final class SomniumAnimHelper {
         if (options == null) {
             options = net.eclipce.somnium.compat.geckolib.player.cast.CastAnimationOptions.DEFAULT;
         }
+
+        // ── onExecuteBodyAlign → snap body yaw to look ──
+        // Face the whole rig where the player is aiming, so the ability goes exactly where
+        // intended. Server-side, authoritative (tracked to all clients), persists until
+        // normal movement/aim logic next updates body yaw. No-op if already aligned (~1°).
+        if (options.onExecuteBodyAlign()) {
+            float lookYaw = player.getYRot();
+            float bodyYaw = player.yBodyRot;
+            float delta = net.minecraft.util.Mth.degreesDifference(bodyYaw, lookYaw);
+            if (Math.abs(delta) > 1.0f) {
+                player.yBodyRot  = lookYaw;
+                player.yBodyRotO = lookYaw;
+                System.out.println("[Somnium-DIAG] triggerCastAnimation: body-align snapped yaw "
+                        + bodyYaw + " -> " + lookYaw);
+            }
+        }
+
+        // ── changeDirectionOnLook → freeze the execution-time look pitch into the options ──
+        // The vertical tilt is locked to where the player looked when the ability fired, so
+        // it doesn't re-aim mid-animation. Capture the pitch here (server-side) and bake it
+        // into the options that travel in the packet; the client applicator clamps + applies
+        // it. Only bother when the option is actually in use.
+        if (!options.changeDirectionOnLook().isEmpty()) {
+            options = options.withCapturedLookPitch(player.getXRot());
+            System.out.println("[Somnium-DIAG] triggerCastAnimation: captured look pitch "
+                    + player.getXRot() + " for changeDirectionOnLook");
+        }
+
         System.out.println("[Somnium-DIAG] triggerCastAnimation: sending PlayPlayerAnimationPacket via sendToTracking");
         net.eclipce.somnium.network.SomniumNetwork.sendToTracking(
                 new net.eclipce.somnium.network.PlayPlayerAnimationPacket(

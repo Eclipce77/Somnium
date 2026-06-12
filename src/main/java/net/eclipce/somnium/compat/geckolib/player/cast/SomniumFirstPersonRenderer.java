@@ -173,8 +173,17 @@ public final class SomniumFirstPersonRenderer {
             net.minecraft.client.renderer.MultiBufferSource.BufferSource buffers =
                     mc.renderBuffers().bufferSource();
             int packedLight = mc.getEntityRenderDispatcher().getPackedLightCoords(player, partialTick);
-            float yaw = Mth.lerp(partialTick, player.yRotO, player.getYRot());
-            playerRenderer.render(player, yaw, partialTick, poseStack, buffers, packedLight);
+
+            // ── Facing lock: render the body facing CAMERA-FORWARD, not its world yaw ──
+            // Item 1 of the FP rebuild: the animation should play as if it's always pointed
+            // straight ahead from the camera, regardless of where the player's body is
+            // actually facing in the world. PlayerRenderer.render orients the model from the
+            // yaw we pass it, so feeding the camera's yaw makes the rig face directly away
+            // from the viewer every frame — the ability always extends straight forward on
+            // screen. (Previously we passed the player's interpolated body yaw, so the
+            // animation drifted off-centre whenever body and camera disagreed.)
+            float cameraYaw = camera.getYRot();
+            playerRenderer.render(player, cameraYaw, partialTick, poseStack, buffers, packedLight);
             // Flush the buffer so the player draws immediately rather than blending into
             // the next batch (which would render after particles/translucents and look
             // off-order against the world).

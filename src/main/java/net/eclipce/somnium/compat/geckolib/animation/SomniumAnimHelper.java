@@ -189,38 +189,25 @@ public final class SomniumAnimHelper {
             options = net.eclipce.somnium.compat.geckolib.player.cast.CastAnimationOptions.DEFAULT;
         }
 
-        // ── onExecuteBodyAlign → genuinely re-face the player to their look direction ──
-        // A plain server-side write to yBodyRot does NOT work for the casting player: their
-        // rendered body yaw is recomputed every tick (and, for their own view, is driven
-        // client-side), so the write is stomped and never reaches the screen. To actually
-        // turn the player we set their real yaw (= current look yaw, so the camera does not
-        // jump — they're already looking that way) and push it through the connection's
-        // teleport, which is vanilla's authoritative "force a rotation the client must
-        // accept" path. We align body and head yaw to match, then sync.
-        //
-        // Net effect: the player genuinely faces where they were looking — body, head, and
-        // game-facing all agree — with no camera movement, because look yaw was already the
-        // target. No-op if already aligned (~1°).
+        // ── onExecuteBodyAlign → re-face the player to their look direction ──
+        // Tell the CASTING CLIENT to set its own body/head yaw to the look yaw (like a
+        // left-click face-align). The client owns its rotation, so a server-side write here
+        // would just get overwritten, and teleport() stutters movement. A rotation-only
+        // packet to the owner is the path that both sticks and doesn't stutter. The raycast
+        // already aims by look, so this is the cosmetic body catch-up — fired at execution.
+        // No-op if already aligned (~1°).
         if (options.onExecuteBodyAlign()) {
             float lookYaw = player.getYRot();
-            float bodyYaw = player.yBodyRot;
-            float delta = net.minecraft.util.Mth.degreesDifference(bodyYaw, lookYaw);
+            float delta = net.minecraft.util.Mth.degreesDifference(player.yBodyRot, lookYaw);
             if (Math.abs(delta) > 1.0f) {
-                // Align body and head yaw to the look yaw.
+                // Also set it server-side so other tracking clients see the new facing; the
+                // packet handles the caster's own authoritative view.
                 player.setYBodyRot(lookYaw);
                 player.setYHeadRot(lookYaw);
-
-                // Authoritatively re-sync rotation to the client. teleport() with the
-                // player's CURRENT position and the look yaw/pitch keeps them exactly where
-                // they are and only commits the rotation; because pitch and yaw equal what
-                // the client already has for the camera, the view does not move — only the
-                // body catches up and the change is now server-authoritative.
-                player.connection.teleport(
-                        player.getX(), player.getY(), player.getZ(),
-                        lookYaw, player.getXRot());
-
-                System.out.println("[Somnium-DIAG] triggerCastAnimation: body-align re-faced yaw "
-                        + bodyYaw + " -> " + lookYaw);
+                net.eclipce.somnium.network.SomniumNetwork.sendToClient(
+                        new net.eclipce.somnium.network.BodyAlignPacket(lookYaw), player);
+                System.out.println("[Somnium-DIAG] triggerCastAnimation: body-align -> " + lookYaw
+                        + " (server set + packet to caster)");
             }
         }
 

@@ -130,6 +130,13 @@ public final class SomniumNetwork {
                 .consumerMainThread(PlayPlayerAnimationPacket::handle)
                 .add();
 
+        // ── Body-align (Server → casting client) for onExecuteBodyAlign ──
+        CHANNEL.messageBuilder(BodyAlignPacket.class, packetId++, NetworkDirection.PLAY_TO_CLIENT)
+                .encoder(BodyAlignPacket::encode)
+                .decoder(BodyAlignPacket::decode)
+                .consumerMainThread(BodyAlignPacket::handle)
+                .add();
+
         Somnium.LOGGER.debug("Somnium network channel initialized with {} packet types", packetId);
     }
 

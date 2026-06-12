@@ -422,11 +422,16 @@ public final class SomniumCastBoneApplicator {
         // PoseStack.scale() at render time. Values are written to SomniumBoneScaleMap
         // and read by ModelPartRenderMixin after translateAndRotate() positions the
         // PoseStack at this bone's pivot. Identity scale (1, 1, 1) is a no-op.
+        //
+        // We pass a per-bone ANCHOR so the scale pins the correct end of the bone (e.g. the
+        // shoulder end of an arm) instead of ballooning symmetrically off the pivot. See
+        // SomniumBoneAnchors for the values and rationale.
         float sx = bone.getScaleX();
         float sy = bone.getScaleY();
         float sz = bone.getScaleZ();
         if (sx != 1f || sy != 1f || sz != 1f) {
-            SomniumBoneScaleMap.setScale(part, sx, sy, sz);
+            float[] anchor = SomniumBoneAnchors.forBone(boneName);
+            SomniumBoneScaleMap.setScale(part, sx, sy, sz, anchor[0], anchor[1], anchor[2]);
             anyTransform = true;
         }
 

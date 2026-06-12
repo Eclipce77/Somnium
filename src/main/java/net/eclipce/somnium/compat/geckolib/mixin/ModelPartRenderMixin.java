@@ -62,6 +62,28 @@ public class ModelPartRenderMixin {
         float[] scale = SomniumBoneScaleMap.getScale((ModelPart) (Object) this);
         if (scale == null) return;
 
-        poseStack.scale(scale[0], scale[1], scale[2]);
+        float sx = scale[0], sy = scale[1], sz = scale[2];
+        float ax = scale[3], ay = scale[4], az = scale[5];
+
+        // ── Anchored scaling ──
+        // poseStack.scale() expands geometry about the current origin, which after
+        // translateAndRotate sits at the bone pivot. Because the arm cube hangs off its pivot
+        // rather than being centred on it, a large stretch pushes BOTH ends away from the
+        // pivot — the shoulder end lifts off the shoulder and the whole arm balloons. To keep
+        // the intended end (e.g. the shoulder/back of the arm) pinned, scale about the anchor
+        // point instead of the pivot: translate to the anchor, scale, translate back. With a
+        // zero anchor this reduces to the original pivot-centred scale.
+        //
+        // This composes naturally with the animation's own position channel: that position is
+        // already baked into the pivot by translateAndRotate (it runs before this injection),
+        // so anchoring around the post-translate origin stacks on top of it rather than
+        // fighting it.
+        if (ax == 0f && ay == 0f && az == 0f) {
+            poseStack.scale(sx, sy, sz);
+        } else {
+            poseStack.translate(ax, ay, az);
+            poseStack.scale(sx, sy, sz);
+            poseStack.translate(-ax, -ay, -az);
+        }
     }
 }

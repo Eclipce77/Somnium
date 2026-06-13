@@ -429,16 +429,11 @@ public final class SomniumCastBoneApplicator {
         // PoseStack.scale() at render time. Values are written to SomniumBoneScaleMap
         // and read by ModelPartRenderMixin after translateAndRotate() positions the
         // PoseStack at this bone's pivot. Identity scale (1, 1, 1) is a no-op.
-        //
-        // We pass a per-bone ANCHOR so the scale pins the correct end of the bone (e.g. the
-        // shoulder end of an arm) instead of ballooning symmetrically off the pivot. See
-        // SomniumBoneAnchors for the values and rationale.
         float sx = bone.getScaleX();
         float sy = bone.getScaleY();
         float sz = bone.getScaleZ();
         if (sx != 1f || sy != 1f || sz != 1f) {
-            float[] anchor = SomniumBoneAnchors.forBone(boneName);
-            SomniumBoneScaleMap.setScale(part, sx, sy, sz, anchor[0], anchor[1], anchor[2]);
+            SomniumBoneScaleMap.setScale(part, sx, sy, sz);
             anyTransform = true;
         }
 
@@ -502,28 +497,20 @@ public final class SomniumCastBoneApplicator {
     // where the player is looking.
 
     /**
-     * Registers the {@code changeDirectionOnLook} pitch for the requested parts as a
-     * render-time OUTER rotation about each part's anchor (the same shoulder/hip anchor the
-     * scale uses), via {@link SomniumBoneScaleMap}. The mixin applies it wrapping the bone's
-     * animated pose and scale, so the entire posed/scaled limb tilts up/down about the joint
-     * while the anchored end stays attached to the body.
-     *
-     * <h3>Why not a bone xRot</h3>
-     * <p>The previous version did {@code part.xRot += pitch}. That rotation happens inside
-     * {@code translateAndRotate}, BEFORE the mixin's anchored scale, so the anchor translate
-     * then ran along the tilted axes and shoved the (already-scaled) arm away from the body.
-     * Applying the pitch as an outer rotation about the anchor, in the same mixin pass as the
-     * scale, makes the tilt and the anchor share one coordinate frame — they stop fighting.</p>
+     * Registers the {@code changeDirectionOnLook} pitch for the requested parts. The pitch is
+     * applied by {@code ModelPartRenderMixin} as a rotation about each bone's own pivot, BEFORE
+     * the bone's transforms run — pre-tilting the frame so the entire authored animation
+     * (position, rotation, scale) plays inside it, angled up/down toward the look. Because the
+     * rotation is about the pivot, the limb stays attached at the shoulder/hip automatically;
+     * no anchor table is needed.
      *
      * <h3>Sign</h3>
-     * <p>{@code capturedLookPitch} is degrees, positive looking down. Converted to radians and
-     * registered directly; the mixin rotates about {@code Axis.XP}. If up/down comes out
-     * inverted on your rig, negate {@code tiltRad} here — it's the single sign knob.</p>
+     * <p>{@code capturedLookPitch} is degrees, positive looking down. Registered as radians. If
+     * up/down comes out inverted on your rig, negate {@code tiltRad} here — single sign knob.</p>
      *
      * <h3>Base + overlay</h3>
-     * <p>We register the pitch for both the base part AND its overlay layer (sleeve/pants),
-     * because the overlay gets its pose from {@code copyFrom} (fields only) and would NOT
-     * otherwise inherit this render-time rotation. HEAD and BODY are skipped.</p>
+     * <p>Registered for both the base part and its overlay (sleeve/pants), since the overlay
+     * won't inherit a render-time rotation via {@code copyFrom}. HEAD and BODY are skipped.</p>
      */
     private static void applyDirectionOnLook(PlayerModel<?> playerModel,
                                              java.util.Set<CastBodyPart> requestedParts,
@@ -534,17 +521,11 @@ public final class SomniumCastBoneApplicator {
         for (CastBodyPart part : requestedParts) {
             if (part == CastBodyPart.HEAD || part == CastBodyPart.BODY) continue;
 
-            String boneName = part.partName();           // e.g. "right_arm"
-            float[] anchor = SomniumBoneAnchors.forBone(boneName);
+            SomniumBoneScaleMap.setLookPitch(part.get(playerModel), tiltRad);
 
-            // Base part.
-            ModelPart base = part.get(playerModel);
-            SomniumBoneScaleMap.setLookPitch(base, tiltRad, anchor[0], anchor[1], anchor[2]);
-
-            // Overlay layer (sleeve / pants) so it tilts with the base limb.
             ModelPart overlay = overlayFor(playerModel, part);
             if (overlay != null) {
-                SomniumBoneScaleMap.setLookPitch(overlay, tiltRad, anchor[0], anchor[1], anchor[2]);
+                SomniumBoneScaleMap.setLookPitch(overlay, tiltRad);
             }
         }
     }

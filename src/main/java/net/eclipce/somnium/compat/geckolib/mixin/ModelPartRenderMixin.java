@@ -36,6 +36,48 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 @Mixin(ModelPart.class)
 public class ModelPartRenderMixin {
 
+    // ── changeDirectionOnLook: pre-tilt the frame about the bone's pivot, BEFORE the bone's
+    // own translateAndRotate runs ──
+    //
+    // This is the whole-animation aim. At BEFORE the translateAndRotate invoke the PoseStack is
+    // still in the parent frame. We rotate the frame by the look pitch about the bone's OWN
+    // pivot (its x/y/z), then let vanilla's translateAndRotate + the bone's position/rotation +
+    // our scale all run normally inside that tilted frame. Because we rotate about the pivot,
+    // the pivot stays fixed (the limb stays attached at the shoulder/hip), and because the tilt
+    // is applied to the frame rather than mixed into any bone channel, the entire authored
+    // animation — position, rotation, scale — plays exactly as intended, just angled up/down.
+    @Inject(
+            method = "render(Lcom/mojang/blaze3d/vertex/PoseStack;Lcom/mojang/blaze3d/vertex/VertexConsumer;IIFFFF)V",
+            at = @At(
+                    value = "INVOKE",
+                    target = "Lnet/minecraft/client/model/geom/ModelPart;translateAndRotate(Lcom/mojang/blaze3d/vertex/PoseStack;)V",
+                    shift = At.Shift.BEFORE
+            )
+    )
+    private void somnium$applyLookPitch(
+            PoseStack poseStack,
+            VertexConsumer vertexConsumer,
+            int packedLight,
+            int packedOverlay,
+            float red, float green, float blue, float alpha,
+            CallbackInfo ci) {
+
+        float pitchRad = SomniumBoneScaleMap.getLookPitch((ModelPart) (Object) this);
+        if (pitchRad == 0f) return;
+
+        ModelPart self = (ModelPart) (Object) this;
+        // Pivot in block units (ModelPart x/y/z are in 1/16 units).
+        float px = self.x / 16.0F;
+        float py = self.y / 16.0F;
+        float pz = self.z / 16.0F;
+
+        // Rotate the frame about the pivot: translate to pivot, rotate X, translate back.
+        poseStack.translate(px, py, pz);
+        poseStack.mulPose(Axis.XP.rotation(pitchRad));
+        poseStack.translate(-px, -py, -pz);
+    }
+
+    // ── Scale: applied AFTER translateAndRotate, pivot-centred, exactly as before ──
     @Inject(
             // Must specify the full descriptor to disambiguate from the 4-parameter overload
             // render(PoseStack, VertexConsumer, int, int) — which only delegates and never
@@ -63,35 +105,6 @@ public class ModelPartRenderMixin {
         float[] scale = SomniumBoneScaleMap.getScale((ModelPart) (Object) this);
         if (scale == null) return;
 
-        float sx = scale[0], sy = scale[1], sz = scale[2];
-        float ax = scale[3], ay = scale[4], az = scale[5];
-        float pitchRad = scale[6];
-
-        boolean hasScale  = (sx != 1f || sy != 1f || sz != 1f);
-        boolean hasPitch  = (pitchRad != 0f);
-        boolean hasAnchor = (ax != 0f || ay != 0f || az != 0f);
-
-        // Fast path: plain pivot-centred scale, no anchor, no look-pitch.
-        if (!hasPitch && !hasAnchor) {
-            if (hasScale) poseStack.scale(sx, sy, sz);
-            return;
-        }
-
-        // ── Anchored transform: rotate (look-pitch) and scale ABOUT THE ANCHOR ──
-        // After translateAndRotate the origin sits at the bone pivot with the bone's own
-        // animated position+rotation applied. We move to the anchor (shoulder/hip), apply the
-        // changeDirectionOnLook pitch as an OUTER X rotation that wraps the whole posed bone,
-        // then the scale, then move back — so the entire animated + scaled limb tilts up/down
-        // about the joint while the anchored end stays pinned to the body. Doing the pitch
-        // here (not as a bone xRot) is what stops it from fighting the anchor and throwing the
-        // arm away from the player.
-        poseStack.translate(ax, ay, az);
-        if (hasPitch) {
-            poseStack.mulPose(Axis.XP.rotation(pitchRad));
-        }
-        if (hasScale) {
-            poseStack.scale(sx, sy, sz);
-        }
-        poseStack.translate(-ax, -ay, -az);
+        poseStack.scale(scale[0], scale[1], scale[2]);
     }
 }

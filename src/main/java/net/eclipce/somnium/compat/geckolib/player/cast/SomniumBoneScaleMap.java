@@ -36,81 +36,50 @@ import java.util.Map;
  */
 public final class SomniumBoneScaleMap {
 
-    // Stored value per part: [sx, sy, sz, ax, ay, az, pitchRad]
-    //   s* = scale factors (multiplicative, compose across animations in a frame)
-    //   a* = anchor offset (model units) from the bone pivot to the point that should stay
-    //        FIXED while scaling AND about which the look-pitch rotates. The mixin transforms
-    //        about this point instead of the pivot, so e.g. the shoulder end of an arm stays
-    //        put while the arm stretches/tilts rather than detaching from the shoulder.
-    //   pitchRad = changeDirectionOnLook outer rotation (radians) about the anchor on the X
-    //        axis. Applied in the mixin as an OUTER rotation wrapping the bone's own pose +
-    //        scale, so the whole posed/scaled limb tilts up/down about the shoulder/hip while
-    //        staying anchored — instead of an xRot baked into the bone (which fought the
-    //        anchor translate and threw the arm away from the body).
-    //
-    // An entry exists if ANY of scale, anchor, or pitch is non-default — a bone can have a
-    // look-pitch with no scale (e.g. an unscaled punching arm), so scale alone no longer gates
-    // storage.
+    // Per-part multiplicative scale [sx, sy, sz], applied by ModelPartRenderMixin AFTER
+    // translateAndRotate (pivot-centred, as vanilla scale works). Composes across animations.
     private static final Map<ModelPart, float[]> SCALE_MAP = new IdentityHashMap<>();
 
-    private static boolean isDefault(float sx, float sy, float sz,
-                                     float ax, float ay, float az, float pitchRad) {
-        return sx == 1f && sy == 1f && sz == 1f
-                && ax == 0f && ay == 0f && az == 0f
-                && pitchRad == 0f;
-    }
+    // Per-part changeDirectionOnLook pitch (radians, X axis). Applied by ModelPartRenderMixin
+    // BEFORE translateAndRotate as a rotation about the bone's OWN pivot, so it pre-tilts the
+    // frame the whole animation then plays inside — angling the entire authored animation
+    // (position, rotation, scale) up/down about the joint while keeping the pivot fixed and the
+    // animation visually intact. Stored separately from scale because the two are applied at
+    // different points in the render (pitch before the bone transforms, scale after).
+    private static final Map<ModelPart, Float> PITCH_MAP = new IdentityHashMap<>();
 
     /**
-     * Registers (or multiplies into) a scale for the given {@link ModelPart} this frame, with
-     * no anchor and no look-pitch (scales about the pivot).
+     * Registers (or multiplies into) a scale for the given {@link ModelPart} this frame.
+     *
+     * <p>A scale of exactly {@code [1,1,1]} is a no-op. Existing scale for the part this frame
+     * is multiplied into, so multiple animations compose.</p>
      */
     public static void setScale(ModelPart part, float sx, float sy, float sz) {
-        setScale(part, sx, sy, sz, 0f, 0f, 0f);
-    }
-
-    /**
-     * Registers a scale plus an anchor for the given {@link ModelPart} this frame (no look-pitch).
-     *
-     * @param part the ModelPart instance — must be the actual object from this frame's PlayerModel
-     * @param sx X scale (1 = none) @param sy Y scale @param sz Z scale
-     * @param ax anchor X offset from pivot (model units) @param ay anchor Y @param az anchor Z
-     */
-    public static void setScale(ModelPart part, float sx, float sy, float sz,
-                                float ax, float ay, float az) {
-        accumulate(part, sx, sy, sz, ax, ay, az, 0f);
-    }
-
-    /**
-     * Registers the changeDirectionOnLook outer rotation (radians, X axis) for a part this
-     * frame, about the given anchor, without contributing any scale. Use this for an aimable
-     * bone that the animation does not scale — the pitch still rotates about the shoulder/hip
-     * so the limb tilts while staying anchored.
-     */
-    public static void setLookPitch(ModelPart part, float pitchRad, float ax, float ay, float az) {
-        accumulate(part, 1f, 1f, 1f, ax, ay, az, pitchRad);
-    }
-
-    private static void accumulate(ModelPart part, float sx, float sy, float sz,
-                                   float ax, float ay, float az, float pitchRad) {
-        if (isDefault(sx, sy, sz, ax, ay, az, pitchRad)) return;
+        if (sx == 1f && sy == 1f && sz == 1f) return;
         float[] existing = SCALE_MAP.get(part);
         if (existing != null) {
             existing[0] *= sx;
             existing[1] *= sy;
             existing[2] *= sz;
-            // Anchor: a non-zero anchor from any writer wins (don't let a later zero wipe it).
-            if (ax != 0f || ay != 0f || az != 0f) {
-                existing[3] = ax;
-                existing[4] = ay;
-                existing[5] = az;
-            }
-            // Pitch: a non-zero pitch from any writer wins (single look-tilt per bone).
-            if (pitchRad != 0f) {
-                existing[6] = pitchRad;
-            }
         } else {
-            SCALE_MAP.put(part, new float[]{sx, sy, sz, ax, ay, az, pitchRad});
+            SCALE_MAP.put(part, new float[]{sx, sy, sz});
         }
+    }
+
+    /**
+     * Registers the changeDirectionOnLook pitch (radians) for a part this frame. The mixin
+     * rotates the frame by this about the bone's own pivot before the bone draws, tilting the
+     * whole animation up/down. A pitch of 0 is a no-op. Last writer wins (one look-tilt per bone).
+     */
+    public static void setLookPitch(ModelPart part, float pitchRad) {
+        if (pitchRad == 0f) return;
+        PITCH_MAP.put(part, pitchRad);
+    }
+
+    /** Pitch (radians) registered for this part this frame, or 0 if none. */
+    public static float getLookPitch(ModelPart part) {
+        Float p = PITCH_MAP.get(part);
+        return p != null ? p : 0f;
     }
 
     /**
@@ -134,6 +103,7 @@ public final class SomniumBoneScaleMap {
      */
     public static void clearAll() {
         SCALE_MAP.clear();
+        PITCH_MAP.clear();
     }
 
     /**
@@ -145,6 +115,7 @@ public final class SomniumBoneScaleMap {
      */
     public static void removeFor(ModelPart part) {
         SCALE_MAP.remove(part);
+        PITCH_MAP.remove(part);
     }
 
     private SomniumBoneScaleMap() {}

@@ -521,11 +521,15 @@ public final class SomniumCastBoneApplicator {
         for (CastBodyPart part : requestedParts) {
             if (part == CastBodyPart.HEAD || part == CastBodyPart.BODY) continue;
 
-            SomniumBoneScaleMap.setLookPitch(part.get(playerModel), tiltRad);
+            // Rest pivot (the joint) for this bone — the rotation point. The base part and its
+            // overlay sleeve/pants share the same joint.
+            float[] rp = SomniumBoneAnchors.restPivot(part.partName());
+
+            SomniumBoneScaleMap.setLookPitch(part.get(playerModel), tiltRad, rp[0], rp[1], rp[2]);
 
             ModelPart overlay = overlayFor(playerModel, part);
             if (overlay != null) {
-                SomniumBoneScaleMap.setLookPitch(overlay, tiltRad);
+                SomniumBoneScaleMap.setLookPitch(overlay, tiltRad, rp[0], rp[1], rp[2]);
             }
         }
     }

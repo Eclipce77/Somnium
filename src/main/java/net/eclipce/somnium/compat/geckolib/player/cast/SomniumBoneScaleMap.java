@@ -40,13 +40,14 @@ public final class SomniumBoneScaleMap {
     // translateAndRotate (pivot-centred, as vanilla scale works). Composes across animations.
     private static final Map<ModelPart, float[]> SCALE_MAP = new IdentityHashMap<>();
 
-    // Per-part changeDirectionOnLook pitch (radians, X axis). Applied by ModelPartRenderMixin
-    // BEFORE translateAndRotate as a rotation about the bone's OWN pivot, so it pre-tilts the
-    // frame the whole animation then plays inside — angling the entire authored animation
-    // (position, rotation, scale) up/down about the joint while keeping the pivot fixed and the
-    // animation visually intact. Stored separately from scale because the two are applied at
-    // different points in the render (pitch before the bone transforms, scale after).
-    private static final Map<ModelPart, Float> PITCH_MAP = new IdentityHashMap<>();
+    // Per-part changeDirectionOnLook look-tilt. Stored as [pitchRad, pivotX, pivotY, pivotZ]
+    // where pivot is the bone's REST pivot (the joint) in BLOCK units — NOT the animated pivot.
+    // The animation mutates ModelPart.x/y/z to bake in its position keyframes, so by render time
+    // those fields are restPivot + animationOffset; rotating about them pivots the limb around a
+    // displaced point in front of the body (the bug where the arm detached from the shoulder).
+    // We rotate about the supplied rest pivot instead, so the joint stays fixed and the whole
+    // animation tilts about the true shoulder/hip.
+    private static final Map<ModelPart, float[]> PITCH_MAP = new IdentityHashMap<>();
 
     /**
      * Registers (or multiplies into) a scale for the given {@link ModelPart} this frame.
@@ -67,19 +68,21 @@ public final class SomniumBoneScaleMap {
     }
 
     /**
-     * Registers the changeDirectionOnLook pitch (radians) for a part this frame. The mixin
-     * rotates the frame by this about the bone's own pivot before the bone draws, tilting the
-     * whole animation up/down. A pitch of 0 is a no-op. Last writer wins (one look-tilt per bone).
+     * Registers the changeDirectionOnLook pitch (radians) for a part this frame, to be applied
+     * by the mixin as a rotation about {@code (restPivotX, restPivotY, restPivotZ)} — the bone's
+     * REST joint position in BLOCK units (i.e. vanilla pivot / 16), captured before the animation
+     * displaced it. A pitch of 0 is a no-op. Last writer wins (one look-tilt per bone).
      */
-    public static void setLookPitch(ModelPart part, float pitchRad) {
+    public static void setLookPitch(ModelPart part, float pitchRad,
+                                    float restPivotX, float restPivotY, float restPivotZ) {
         if (pitchRad == 0f) return;
-        PITCH_MAP.put(part, pitchRad);
+        PITCH_MAP.put(part, new float[]{pitchRad, restPivotX, restPivotY, restPivotZ});
     }
 
-    /** Pitch (radians) registered for this part this frame, or 0 if none. */
-    public static float getLookPitch(ModelPart part) {
-        Float p = PITCH_MAP.get(part);
-        return p != null ? p : 0f;
+    /** Look-tilt data [pitchRad, pivotX, pivotY, pivotZ] for this part, or null if none. */
+    @Nullable
+    public static float[] getLookPitch(ModelPart part) {
+        return PITCH_MAP.get(part);
     }
 
     /**

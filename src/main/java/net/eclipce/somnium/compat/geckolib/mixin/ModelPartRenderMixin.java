@@ -62,16 +62,18 @@ public class ModelPartRenderMixin {
             float red, float green, float blue, float alpha,
             CallbackInfo ci) {
 
-        float pitchRad = SomniumBoneScaleMap.getLookPitch((ModelPart) (Object) this);
-        if (pitchRad == 0f) return;
+        float[] tilt = SomniumBoneScaleMap.getLookPitch((ModelPart) (Object) this);
+        if (tilt == null) return;
 
-        ModelPart self = (ModelPart) (Object) this;
-        // Pivot in block units (ModelPart x/y/z are in 1/16 units).
-        float px = self.x / 16.0F;
-        float py = self.y / 16.0F;
-        float pz = self.z / 16.0F;
+        float pitchRad = tilt[0];
+        // Rest pivot (the joint), already in BLOCK units. We must NOT use self.x/y/z here —
+        // the animation has mutated those to bake in its position keyframes, so they point in
+        // FRONT of the body, and rotating about them detaches the limb from the shoulder.
+        float px = tilt[1];
+        float py = tilt[2];
+        float pz = tilt[3];
 
-        // Rotate the frame about the pivot: translate to pivot, rotate X, translate back.
+        // Rotate the frame about the true joint: translate to rest pivot, rotate X, translate back.
         poseStack.translate(px, py, pz);
         poseStack.mulPose(Axis.XP.rotation(pitchRad));
         poseStack.translate(-px, -py, -pz);

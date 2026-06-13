@@ -2,6 +2,7 @@ package net.eclipce.somnium.compat.geckolib.mixin;
 
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.blaze3d.vertex.VertexConsumer;
+import com.mojang.math.Axis;
 import net.eclipce.somnium.compat.geckolib.player.cast.SomniumBoneScaleMap;
 import net.minecraft.client.model.geom.ModelPart;
 import org.spongepowered.asm.mixin.Mixin;
@@ -64,26 +65,33 @@ public class ModelPartRenderMixin {
 
         float sx = scale[0], sy = scale[1], sz = scale[2];
         float ax = scale[3], ay = scale[4], az = scale[5];
+        float pitchRad = scale[6];
 
-        // ── Anchored scaling ──
-        // poseStack.scale() expands geometry about the current origin, which after
-        // translateAndRotate sits at the bone pivot. Because the arm cube hangs off its pivot
-        // rather than being centred on it, a large stretch pushes BOTH ends away from the
-        // pivot — the shoulder end lifts off the shoulder and the whole arm balloons. To keep
-        // the intended end (e.g. the shoulder/back of the arm) pinned, scale about the anchor
-        // point instead of the pivot: translate to the anchor, scale, translate back. With a
-        // zero anchor this reduces to the original pivot-centred scale.
-        //
-        // This composes naturally with the animation's own position channel: that position is
-        // already baked into the pivot by translateAndRotate (it runs before this injection),
-        // so anchoring around the post-translate origin stacks on top of it rather than
-        // fighting it.
-        if (ax == 0f && ay == 0f && az == 0f) {
-            poseStack.scale(sx, sy, sz);
-        } else {
-            poseStack.translate(ax, ay, az);
-            poseStack.scale(sx, sy, sz);
-            poseStack.translate(-ax, -ay, -az);
+        boolean hasScale  = (sx != 1f || sy != 1f || sz != 1f);
+        boolean hasPitch  = (pitchRad != 0f);
+        boolean hasAnchor = (ax != 0f || ay != 0f || az != 0f);
+
+        // Fast path: plain pivot-centred scale, no anchor, no look-pitch.
+        if (!hasPitch && !hasAnchor) {
+            if (hasScale) poseStack.scale(sx, sy, sz);
+            return;
         }
+
+        // ── Anchored transform: rotate (look-pitch) and scale ABOUT THE ANCHOR ──
+        // After translateAndRotate the origin sits at the bone pivot with the bone's own
+        // animated position+rotation applied. We move to the anchor (shoulder/hip), apply the
+        // changeDirectionOnLook pitch as an OUTER X rotation that wraps the whole posed bone,
+        // then the scale, then move back — so the entire animated + scaled limb tilts up/down
+        // about the joint while the anchored end stays pinned to the body. Doing the pitch
+        // here (not as a bone xRot) is what stops it from fighting the anchor and throwing the
+        // arm away from the player.
+        poseStack.translate(ax, ay, az);
+        if (hasPitch) {
+            poseStack.mulPose(Axis.XP.rotation(pitchRad));
+        }
+        if (hasScale) {
+            poseStack.scale(sx, sy, sz);
+        }
+        poseStack.translate(-ax, -ay, -az);
     }
 }

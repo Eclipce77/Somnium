@@ -275,9 +275,16 @@ public final class SomniumCastBoneApplicator {
         applyAllBones(bakedModel, playerModel, animatedBones);
 
         // ── changeDirectionOnLook ──
-        // Apply a mild, clamped up/down tilt toward the execution-time look pitch (frozen in
-        // the options, not re-read here). After applyAllBones (on top of the animation pose)
-        // and BEFORE syncLayersFromBaseParts so the sleeve/pant overlay copies the tilt.
+        // Register the execution-time look pitch (frozen in the options) as a render-time
+        // OUTER rotation about each part's anchor, NOT as a bone xRot. The mixin applies it
+        // wrapping the bone's pose + scale, so the whole posed/scaled limb tilts up/down about
+        // the shoulder/hip while staying anchored. Doing it as a field write (the old way)
+        // fought the anchor and flung the arm off the body.
+        //
+        // Must run AFTER applyAllBones (which registers the animation's scale + anchor for the
+        // base parts) so the pitch composes into the same scale-map entry. The sleeve/pant
+        // overlay won't inherit this via syncLayersFromBaseParts (copyFrom only moves fields,
+        // not render-time scale-map data), so we register the pitch for the overlay too.
         if (!options.changeDirectionOnLook().isEmpty()) {
             applyDirectionOnLook(playerModel, options.changeDirectionOnLook(),
                     options.capturedLookPitch());
@@ -492,40 +499,65 @@ public final class SomniumCastBoneApplicator {
     // SomniumAnimHelper.triggerCastAnimation) — it re-faces the player and needs no render
     // code. It handles the HORIZONTAL (yaw) component of aiming; applyDirectionOnLook below
     // handles the VERTICAL (pitch) component, and the two together make the limb point
-    // exactly where the player is looking.
+    // where the player is looking.
 
     /**
-     * Tilts the requested parts on the X axis to match the player's execution-time look
-     * pitch 1:1, so the limb points precisely at the look elevation. This is the
-     * {@code changeDirectionOnLook} option.
+     * Registers the {@code changeDirectionOnLook} pitch for the requested parts as a
+     * render-time OUTER rotation about each part's anchor (the same shoulder/hip anchor the
+     * scale uses), via {@link SomniumBoneScaleMap}. The mixin applies it wrapping the bone's
+     * animated pose and scale, so the entire posed/scaled limb tilts up/down about the joint
+     * while the anchored end stays attached to the body.
      *
-     * <h3>Why 1:1 (not clamped/scaled)</h3>
-     * <p>An earlier version scaled/clamped this to avoid "over-rotation," but that made the
-     * limb point at a different angle than the player was actually looking — imprecise, and
-     * the whole point of the option is precision. With {@code onExecuteBodyAlign} now
-     * genuinely re-facing the body to the look yaw, this method only needs to supply the
-     * vertical component, applied at full strength so the limb's elevation matches the
-     * crosshair exactly.</p>
+     * <h3>Why not a bone xRot</h3>
+     * <p>The previous version did {@code part.xRot += pitch}. That rotation happens inside
+     * {@code translateAndRotate}, BEFORE the mixin's anchored scale, so the anchor translate
+     * then ran along the tilted axes and shoved the (already-scaled) arm away from the body.
+     * Applying the pitch as an outer rotation about the anchor, in the same mixin pass as the
+     * scale, makes the tilt and the anchor share one coordinate frame — they stop fighting.</p>
      *
      * <h3>Sign</h3>
-     * <p>{@code capturedLookPitch} is degrees, positive looking down. A vanilla arm's
-     * {@code xRot} increases to swing the hand downward, so adding the pitch directly tilts
-     * the limb down when looking down and up when looking up — matching intent.</p>
+     * <p>{@code capturedLookPitch} is degrees, positive looking down. Converted to radians and
+     * registered directly; the mixin rotates about {@code Axis.XP}. If up/down comes out
+     * inverted on your rig, negate {@code tiltRad} here — it's the single sign knob.</p>
      *
-     * <h3>Scope</h3>
-     * <p>HEAD and BODY are skipped (head already pitches in vanilla; torso never pitches).
-     * Layer overlays are not touched here — {@code syncLayersFromBaseParts} copies the tilted
-     * base part onto its overlay afterward.</p>
+     * <h3>Base + overlay</h3>
+     * <p>We register the pitch for both the base part AND its overlay layer (sleeve/pants),
+     * because the overlay gets its pose from {@code copyFrom} (fields only) and would NOT
+     * otherwise inherit this render-time rotation. HEAD and BODY are skipped.</p>
      */
     private static void applyDirectionOnLook(PlayerModel<?> playerModel,
                                              java.util.Set<CastBodyPart> requestedParts,
                                              float capturedLookPitchDegrees) {
         float tiltRad = (float) Math.toRadians(capturedLookPitchDegrees);
+        if (tiltRad == 0f) return;
 
         for (CastBodyPart part : requestedParts) {
             if (part == CastBodyPart.HEAD || part == CastBodyPart.BODY) continue;
-            part.get(playerModel).xRot += tiltRad;
+
+            String boneName = part.partName();           // e.g. "right_arm"
+            float[] anchor = SomniumBoneAnchors.forBone(boneName);
+
+            // Base part.
+            ModelPart base = part.get(playerModel);
+            SomniumBoneScaleMap.setLookPitch(base, tiltRad, anchor[0], anchor[1], anchor[2]);
+
+            // Overlay layer (sleeve / pants) so it tilts with the base limb.
+            ModelPart overlay = overlayFor(playerModel, part);
+            if (overlay != null) {
+                SomniumBoneScaleMap.setLookPitch(overlay, tiltRad, anchor[0], anchor[1], anchor[2]);
+            }
         }
+    }
+
+    /** Maps a base {@link CastBodyPart} to its overlay-layer ModelPart, or null if none. */
+    private static ModelPart overlayFor(PlayerModel<?> m, CastBodyPart part) {
+        return switch (part) {
+            case RIGHT_ARM -> m.rightSleeve;
+            case LEFT_ARM  -> m.leftSleeve;
+            case RIGHT_LEG -> m.rightPants;
+            case LEFT_LEG  -> m.leftPants;
+            default        -> null;
+        };
     }
 
 

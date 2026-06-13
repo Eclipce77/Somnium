@@ -36,31 +36,40 @@ import java.util.Map;
  */
 public final class SomniumBoneScaleMap {
 
-    // Stored value per part: [sx, sy, sz, ax, ay, az]
+    // Stored value per part: [sx, sy, sz, ax, ay, az, pitchRad]
     //   s* = scale factors (multiplicative, compose across animations in a frame)
     //   a* = anchor offset (model units) from the bone pivot to the point that should stay
-    //        FIXED while scaling. The mixin scales about this point instead of the pivot, so
-    //        e.g. the shoulder end of an arm stays put while the arm stretches toward the hand
-    //        rather than ballooning off the shoulder. Anchor does NOT compose multiplicatively
-    //        — the last writer's anchor wins (anchors are a property of the bone geometry, not
-    //        the animation, so all writers for the same bone should pass the same one anyway).
+    //        FIXED while scaling AND about which the look-pitch rotates. The mixin transforms
+    //        about this point instead of the pivot, so e.g. the shoulder end of an arm stays
+    //        put while the arm stretches/tilts rather than detaching from the shoulder.
+    //   pitchRad = changeDirectionOnLook outer rotation (radians) about the anchor on the X
+    //        axis. Applied in the mixin as an OUTER rotation wrapping the bone's own pose +
+    //        scale, so the whole posed/scaled limb tilts up/down about the shoulder/hip while
+    //        staying anchored — instead of an xRot baked into the bone (which fought the
+    //        anchor translate and threw the arm away from the body).
+    //
+    // An entry exists if ANY of scale, anchor, or pitch is non-default — a bone can have a
+    // look-pitch with no scale (e.g. an unscaled punching arm), so scale alone no longer gates
+    // storage.
     private static final Map<ModelPart, float[]> SCALE_MAP = new IdentityHashMap<>();
+
+    private static boolean isDefault(float sx, float sy, float sz,
+                                     float ax, float ay, float az, float pitchRad) {
+        return sx == 1f && sy == 1f && sz == 1f
+                && ax == 0f && ay == 0f && az == 0f
+                && pitchRad == 0f;
+    }
 
     /**
      * Registers (or multiplies into) a scale for the given {@link ModelPart} this frame, with
-     * no anchor (scales about the pivot). Equivalent to {@link #setScale(ModelPart, float,
-     * float, float, float, float, float)} with a zero anchor.
+     * no anchor and no look-pitch (scales about the pivot).
      */
     public static void setScale(ModelPart part, float sx, float sy, float sz) {
         setScale(part, sx, sy, sz, 0f, 0f, 0f);
     }
 
     /**
-     * Registers a scale plus an anchor for the given {@link ModelPart} this frame.
-     *
-     * <p>Scale factors multiply into any existing entry (so multiple animations compose);
-     * the anchor is stored as-is (last writer wins — see the field comment). A scale of
-     * exactly {@code [1,1,1]} with a zero anchor is a no-op and is not stored.</p>
+     * Registers a scale plus an anchor for the given {@link ModelPart} this frame (no look-pitch).
      *
      * @param part the ModelPart instance — must be the actual object from this frame's PlayerModel
      * @param sx X scale (1 = none) @param sy Y scale @param sz Z scale
@@ -68,21 +77,39 @@ public final class SomniumBoneScaleMap {
      */
     public static void setScale(ModelPart part, float sx, float sy, float sz,
                                 float ax, float ay, float az) {
-        if (sx == 1f && sy == 1f && sz == 1f && ax == 0f && ay == 0f && az == 0f) return;
+        accumulate(part, sx, sy, sz, ax, ay, az, 0f);
+    }
+
+    /**
+     * Registers the changeDirectionOnLook outer rotation (radians, X axis) for a part this
+     * frame, about the given anchor, without contributing any scale. Use this for an aimable
+     * bone that the animation does not scale — the pitch still rotates about the shoulder/hip
+     * so the limb tilts while staying anchored.
+     */
+    public static void setLookPitch(ModelPart part, float pitchRad, float ax, float ay, float az) {
+        accumulate(part, 1f, 1f, 1f, ax, ay, az, pitchRad);
+    }
+
+    private static void accumulate(ModelPart part, float sx, float sy, float sz,
+                                   float ax, float ay, float az, float pitchRad) {
+        if (isDefault(sx, sy, sz, ax, ay, az, pitchRad)) return;
         float[] existing = SCALE_MAP.get(part);
         if (existing != null) {
             existing[0] *= sx;
             existing[1] *= sy;
             existing[2] *= sz;
-            // Anchor: keep a non-zero anchor if one is supplied; don't let a later zero-anchor
-            // writer wipe a real anchor set earlier this frame.
+            // Anchor: a non-zero anchor from any writer wins (don't let a later zero wipe it).
             if (ax != 0f || ay != 0f || az != 0f) {
                 existing[3] = ax;
                 existing[4] = ay;
                 existing[5] = az;
             }
+            // Pitch: a non-zero pitch from any writer wins (single look-tilt per bone).
+            if (pitchRad != 0f) {
+                existing[6] = pitchRad;
+            }
         } else {
-            SCALE_MAP.put(part, new float[]{sx, sy, sz, ax, ay, az});
+            SCALE_MAP.put(part, new float[]{sx, sy, sz, ax, ay, az, pitchRad});
         }
     }
 

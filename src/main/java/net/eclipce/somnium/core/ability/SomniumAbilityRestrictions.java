@@ -51,6 +51,32 @@ public final class SomniumAbilityRestrictions {
     /** Game-tick (level time) through which movement is disabled, per player UUID. */
     private static final Map<UUID, Long> noMoveUntil  = new ConcurrentHashMap<>();
 
+    /**
+     * Set true by ability code for the duration of its own {@code hurt()} call so the
+     * punch backstop below does NOT cancel ability-dealt damage. Without this, an ability
+     * that disables the player's punching (to stop vanilla melee) would also cancel its own
+     * damage, because that damage is attributed to the same player and routes through
+     * {@link #onLivingAttack}. Confined to the server thread; always toggled in a
+     * try/finally so it can't get stuck on.
+     */
+    private static final ThreadLocal<Boolean> dealingAbilityDamage =
+            ThreadLocal.withInitial(() -> Boolean.FALSE);
+
+    /**
+     * Runs {@code damageAction} with the ability-damage bypass active, so any player-sourced
+     * damage it triggers is exempt from the punch backstop. Use this to wrap ability
+     * {@code target.hurt(...)} calls when the same ability has punching disabled.
+     */
+    public static void withAbilityDamage(Runnable damageAction) {
+        boolean prev = dealingAbilityDamage.get();
+        dealingAbilityDamage.set(Boolean.TRUE);
+        try {
+            damageAction.run();
+        } finally {
+            dealingAbilityDamage.set(prev);
+        }
+    }
+
     // ─── Arming API (called from ability code, server-side) ─────────────────────
 
     /**
@@ -114,6 +140,9 @@ public final class SomniumAbilityRestrictions {
      */
     @SubscribeEvent(priority = EventPriority.HIGH)
     public static void onLivingAttack(LivingAttackEvent event) {
+        // Ability-dealt damage is exempt: an ability that disabled punching to suppress
+        // vanilla melee must still be able to deal its own (player-attributed) damage.
+        if (dealingAbilityDamage.get()) return;
         if (event.getSource().getEntity() instanceof Player attacker
                 && isPunchingDisabled(attacker)) {
             event.setCanceled(true);

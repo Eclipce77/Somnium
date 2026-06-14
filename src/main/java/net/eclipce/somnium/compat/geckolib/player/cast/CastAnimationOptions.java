@@ -52,6 +52,16 @@ public final class CastAnimationOptions {
      * changeDirectionOnLook is unused. Stamped via {@link #withCapturedLookPitch(float)}.
      */
     private final float capturedLookPitch;
+    /**
+     * Number of ticks into the clip at which playback should BEGIN, instead of frame 0.
+     * Used for a seamless hand-off between two clips — e.g. a Gomu retract that should
+     * pick up exactly where an interrupted extend left off, rather than snapping back to
+     * the fully-extended pose and popping. The applicator seeds the animation start tick
+     * backward by this amount, so both the rendered pose and the elapsed-time completion
+     * clock start at this offset. {@code 0} (default) plays the clip normally from the
+     * start. Should be {@code < animationLengthTicks}.
+     */
+    private final int startOffsetTicks;
 
     private CastAnimationOptions(Set<CastBodyPart> suppressVanillaAnimOn,
                                  boolean           onExecuteBodyAlign,
@@ -61,7 +71,8 @@ public final class CastAnimationOptions {
                                  boolean showInFirstPerson,
                                  boolean heldItemsShown,
                                  int     animationLengthTicks,
-                                 float   capturedLookPitch) {
+                                 float   capturedLookPitch,
+                                 int     startOffsetTicks) {
         this.suppressVanillaAnimOn  = suppressVanillaAnimOn;
         this.onExecuteBodyAlign     = onExecuteBodyAlign;
         this.changeDirectionOnLook  = changeDirectionOnLook;
@@ -71,6 +82,7 @@ public final class CastAnimationOptions {
         this.heldItemsShown         = heldItemsShown;
         this.animationLengthTicks  = animationLengthTicks;
         this.capturedLookPitch      = capturedLookPitch;
+        this.startOffsetTicks       = startOffsetTicks;
     }
 
     /**
@@ -91,7 +103,8 @@ public final class CastAnimationOptions {
                 showInFirstPerson,
                 heldItemsShown,
                 animationLengthTicks,
-                pitchDegrees);
+                pitchDegrees,
+                startOffsetTicks);
     }
 
     // ─── Accessors ─────────────────────────────────────────────────────────────
@@ -157,6 +170,13 @@ public final class CastAnimationOptions {
      */
     public int animationLengthTicks() { return animationLengthTicks; }
 
+    /**
+     * Ticks into the clip at which playback begins (see {@link #startOffsetTicks}). The
+     * applicator seeds the animation start tick backward by this so the clip resumes from
+     * this point rather than frame 0. {@code 0} means play from the start.
+     */
+    public int startOffsetTicks() { return startOffsetTicks; }
+
     public static Builder builder() { return new Builder(); }
 
     // ─── Network codec ─────────────────────────────────────────────────────────
@@ -187,7 +207,8 @@ public final class CastAnimationOptions {
                 buf.readBoolean(),
                 buf.readBoolean(),
                 buf.readVarInt(),
-                buf.readFloat());
+                buf.readFloat(),
+                buf.readVarInt());
     }
 
     /**
@@ -205,6 +226,7 @@ public final class CastAnimationOptions {
         buf.writeBoolean(heldItemsShown);
         buf.writeVarInt(animationLengthTicks);
         buf.writeFloat(capturedLookPitch);
+        buf.writeVarInt(startOffsetTicks);
     }
 
     /**
@@ -250,6 +272,7 @@ public final class CastAnimationOptions {
         private boolean showInFirstPerson = false;
         private boolean heldItemsShown    = true;
         private int     animationLengthTicks = 0;
+        private int     startOffsetTicks     = 0;
 
         private Builder() {}
 
@@ -363,6 +386,23 @@ public final class CastAnimationOptions {
             return this;
         }
 
+        /**
+         * Sets the tick at which this clip begins playing, instead of frame 0. Use for a
+         * seamless hand-off between two clips: trigger the second clip with the offset that
+         * matches where the first one was interrupted, so the pose continues smoothly
+         * instead of snapping. The applicator seeds the start tick backward by this amount,
+         * so the clip's pose AND its elapsed-time completion both begin here — i.e. a clip
+         * of length L started at offset O finishes after only {@code L - O} more ticks.
+         *
+         * <p>Pass {@code 0} (the default) to play normally from the start. Keep this strictly
+         * less than {@link #animationLengthTicks(int)}; values {@code >=} the length would
+         * complete the clip immediately.</p>
+         */
+        public Builder startOffsetTicks(int ticks) {
+            this.startOffsetTicks = Math.max(0, ticks);
+            return this;
+        }
+
         public CastAnimationOptions build() {
             // EnumSet copies preserve enum-iteration order and use a compact bitset
             // internally — cheap to construct, cheap to iterate.
@@ -379,7 +419,8 @@ public final class CastAnimationOptions {
                     showInFirstPerson,
                     heldItemsShown,
                     animationLengthTicks,
-                    0f); // capturedLookPitch is stamped later, server-side, at execution
+                    0f, // capturedLookPitch is stamped later, server-side, at execution
+                    startOffsetTicks);
         }
     }
 }

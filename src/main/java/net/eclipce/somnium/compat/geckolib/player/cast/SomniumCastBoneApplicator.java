@@ -175,7 +175,22 @@ public final class SomniumCastBoneApplicator {
             // LOOP animations have loopType().shouldPlayAgain() == true; we never auto-finish
             // those (matches prior behaviour — loops end only when replaced).
             if (animatable.wasJustConsumed()) {
-                animatable.setAnimationStartTick(frameTime);
+                // Seed the start tick BACKWARD by the caller's start offset so the clip
+                // resumes from that tick instead of frame 0. Because getTick() derives the
+                // playhead from (frameTime - animationStartTick), and completion below is
+                // (frameTime - startTick) >= length, seeding back by O makes both the pose
+                // and the completion clock begin at O — a clip of length L started at O
+                // finishes after L-O more ticks. Used for the Gomu retract that picks up
+                // exactly where an interrupted extend stopped. Clamped so it can't pass the
+                // length (which would finish the clip on its first frame).
+                int offset = options.startOffsetTicks();
+                if (offset > 0) {
+                    int len = options.animationLengthTicks();
+                    if (len > 0 && offset >= len) offset = Math.max(0, len - 1);
+                    animatable.setAnimationStartTick(frameTime - offset);
+                } else {
+                    animatable.setAnimationStartTick(frameTime);
+                }
                 animatable.clearJustConsumed();
             }
 

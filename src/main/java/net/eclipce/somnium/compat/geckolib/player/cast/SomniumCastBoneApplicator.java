@@ -491,29 +491,45 @@ public final class SomniumCastBoneApplicator {
                 SomniumProceduralStretch.get(player.getUUID());
         if (stretch == null) return;
 
-        ModelPart part = stretch.part.get(playerModel);
+        CastBodyPart bodyPart = stretch.part;
+        ModelPart    part     = bodyPart.get(playerModel);
+
+        System.out.println("[Somnium-DIAG] applyProceduralStretch: RUNNING part=" + bodyPart
+                + " reach=" + stretch.reachBlocks + " aimPitch=" + stretch.aimPitchRad);
 
         // ── Aim ──
-        // The arm rests pointing straight DOWN (+Y local, xRot 0). Scaling Y alone would just
-        // make it a longer downward pole (the reported bug). To make it reach along the look
-        // direction we first rotate it to the supplied aim pitch. We OVERWRITE xRot (not +=)
-        // because the rocket arm is fully owned by this stretch — vanilla locomotion swing on
-        // this arm is suppressed by the ability's options, so there's no pose to preserve.
-        // zRot/yRot are zeroed so the arm lies in the body's forward plane (body yaw already
-        // faces the look direction via onExecuteBodyAlign, so no local yaw is needed).
-        if (stretch.aimPitchRad != 0f) {
-            part.xRot = stretch.aimPitchRad;
-            part.yRot = 0f;
-            part.zRot = 0f;
+        // Use the SAME mechanism the clip-driven changeDirectionOnLook uses: register a frame
+        // rotation about the bone's REST pivot (its joint), applied by ModelPartRenderMixin
+        // BEFORE translateAndRotate. This is the proven path — a direct part.xRot write was
+        // unreliable here (it rotates about the animated/displaced pivot and other passes can
+        // reset it), which is why the arm rendered as a straight vertical pole with no aim.
+        // Rotating about the rest pivot keeps the arm attached at the shoulder and reliably
+        // angles the whole stretched limb along the aim.
+        if (stretch.aimPitchRad != 0f && bodyPart != CastBodyPart.HEAD && bodyPart != CastBodyPart.BODY) {
+            float[] rp = SomniumBoneAnchors.restPivot(bodyPart.partName());
+            SomniumBoneScaleMap.setLookPitch(part, stretch.aimPitchRad, rp[0], rp[1], rp[2]);
+
+            // Apply to the overlay sleeve/pants too, or it won't follow the rotation.
+            ModelPart overlay = overlayFor(playerModel, bodyPart);
+            if (overlay != null) {
+                SomniumBoneScaleMap.setLookPitch(overlay, stretch.aimPitchRad, rp[0], rp[1], rp[2]);
+            }
         }
 
         // ── Length ──
         // Multiplicative Y-scale lengthens the (now correctly-aimed) arm toward the target.
+        // Applied to both the base part and the overlay so the sleeve stretches with the arm.
         float yScale = SomniumProceduralStretch.reachToScale(stretch.reachBlocks);
         if (yScale != 1f) {
-            // Length along Y only — keep girth (X/Z) at 1 so it reads as a rubber stretch.
             SomniumBoneScaleMap.setScale(part, 1f, yScale, 1f);
+            ModelPart overlay = overlayFor(playerModel, bodyPart);
+            if (overlay != null) {
+                SomniumBoneScaleMap.setScale(overlay, 1f, yScale, 1f);
+            }
         }
+
+        System.out.println("[Somnium-DIAG] applyProceduralStretch: registered lookPitch="
+                + stretch.aimPitchRad + " yScale=" + yScale);
     }
 
     /**

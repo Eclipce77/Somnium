@@ -66,6 +66,13 @@ public final class SomniumCastBoneApplicator {
         // hide-set is reapplied below after applyAllBones.
         restorePreviouslyHidden(playerModel, animatable);
 
+        // ── Procedural (code-driven) stretch pass ──
+        // Runs every frame, independent of whether a clip animation is active, because some
+        // abilities (e.g. Gomu Rocket's grab) stretch a limb purely from gameplay code toward
+        // a world point with no authored clip. Writes into the same SomniumBoneScaleMap channel
+        // the clip pass uses, so the two compose multiplicatively if both are present.
+        applyProceduralStretch(player, playerModel);
+
         // Consume any packet-queued animation before checking isActive
         animatable.consumeQueue();
 
@@ -175,22 +182,7 @@ public final class SomniumCastBoneApplicator {
             // LOOP animations have loopType().shouldPlayAgain() == true; we never auto-finish
             // those (matches prior behaviour — loops end only when replaced).
             if (animatable.wasJustConsumed()) {
-                // Seed the start tick BACKWARD by the caller's start offset so the clip
-                // resumes from that tick instead of frame 0. Because getTick() derives the
-                // playhead from (frameTime - animationStartTick), and completion below is
-                // (frameTime - startTick) >= length, seeding back by O makes both the pose
-                // and the completion clock begin at O — a clip of length L started at O
-                // finishes after L-O more ticks. Used for the Gomu retract that picks up
-                // exactly where an interrupted extend stopped. Clamped so it can't pass the
-                // length (which would finish the clip on its first frame).
-                int offset = options.startOffsetTicks();
-                if (offset > 0) {
-                    int len = options.animationLengthTicks();
-                    if (len > 0 && offset >= len) offset = Math.max(0, len - 1);
-                    animatable.setAnimationStartTick(frameTime - offset);
-                } else {
-                    animatable.setAnimationStartTick(frameTime);
-                }
+                animatable.setAnimationStartTick(frameTime);
                 animatable.clearJustConsumed();
             }
 
@@ -482,6 +474,29 @@ public final class SomniumCastBoneApplicator {
         for (CastLayer    l : hiddenLayers) l.get(playerModel).visible = true;
         hiddenParts.clear();
         hiddenLayers.clear();
+    }
+
+    /**
+     * Applies any active {@link SomniumProceduralStretch} for this player by writing a scale
+     * into {@link SomniumBoneScaleMap} for the stretched part. The arm's length axis in the
+     * vanilla {@code PlayerModel} runs along local Y (the limb hangs downward from its pivot),
+     * so a reach is expressed as a Y-scale; X/Z stay at 1 so the limb gets longer, not fatter.
+     *
+     * <p>This composes with clip-driven scale because {@code SomniumBoneScaleMap.setScale} is
+     * multiplicative. It runs before the clip pass's early-return, so an ability that stretches
+     * purely from code (no clip) still renders.</p>
+     */
+    private static void applyProceduralStretch(Player player, PlayerModel<?> playerModel) {
+        SomniumProceduralStretch.Stretch stretch =
+                SomniumProceduralStretch.get(player.getUUID());
+        if (stretch == null) return;
+
+        float yScale = SomniumProceduralStretch.reachToScale(stretch.reachBlocks);
+        if (yScale == 1f) return;
+
+        ModelPart part = stretch.part.get(playerModel);
+        // Length along Y only — keep girth (X/Z) at 1 so it reads as a rubber stretch.
+        SomniumBoneScaleMap.setScale(part, 1f, yScale, 1f);
     }
 
     /**

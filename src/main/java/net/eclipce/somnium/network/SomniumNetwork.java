@@ -137,6 +137,13 @@ public final class SomniumNetwork {
                 .consumerMainThread(BodyAlignPacket::handle)
                 .add();
 
+        // ── Procedural limb stretch (Server → player + trackers) for code-driven reaches ──
+        CHANNEL.messageBuilder(ProceduralStretchPacket.class, packetId++, NetworkDirection.PLAY_TO_CLIENT)
+                .encoder(ProceduralStretchPacket::encode)
+                .decoder(ProceduralStretchPacket::decode)
+                .consumerMainThread(ProceduralStretchPacket::handle)
+                .add();
+
         Somnium.LOGGER.debug("Somnium network channel initialized with {} packet types", packetId);
     }
 

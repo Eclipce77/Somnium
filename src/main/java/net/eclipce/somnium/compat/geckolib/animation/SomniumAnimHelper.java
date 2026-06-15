@@ -229,4 +229,38 @@ public final class SomniumAnimHelper {
                 player);
         System.out.println("[Somnium-DIAG] triggerCastAnimation: sendToTracking returned");
     }
+
+    /**
+     * Drives a <em>procedural</em> (code-driven) limb stretch toward a world point, for reaches
+     * that can't be authored as a clip because the target is only known at runtime — e.g. the
+     * Gomu Rocket grab stretching the arm to whatever block the player aims at.
+     *
+     * <p>Call this every tick while the reach is changing (server-side, with a {@code ServerPlayer}).
+     * It sends the stretch to the player and everyone tracking them, so the stretch renders for
+     * all viewers. Call {@link #clearProceduralStretch} when the reach ends (release / retract).</p>
+     *
+     * @param player      the stretching player (server-side)
+     * @param part        which limb to stretch (e.g. {@link net.eclipce.somnium.compat.geckolib.player.cast.CastBodyPart#RIGHT_ARM})
+     * @param reachBlocks shoulder→target distance in blocks; 0 means no stretch
+     * @param targetX     world X of the reach target (sent for future hand-orientation use)
+     * @param targetY     world Y of the reach target
+     * @param targetZ     world Z of the reach target
+     */
+    public static void setProceduralStretch(net.minecraft.server.level.ServerPlayer player,
+                                            net.eclipce.somnium.compat.geckolib.player.cast.CastBodyPart part,
+                                            float reachBlocks,
+                                            double targetX, double targetY, double targetZ) {
+        net.eclipce.somnium.network.SomniumNetwork.sendToTracking(
+                new net.eclipce.somnium.network.ProceduralStretchPacket(
+                        player.getUUID(), true, part.ordinal(), reachBlocks,
+                        targetX, targetY, targetZ),
+                player);
+    }
+
+    /** Clears any active procedural stretch for the player on the client and all trackers. */
+    public static void clearProceduralStretch(net.minecraft.server.level.ServerPlayer player) {
+        net.eclipce.somnium.network.SomniumNetwork.sendToTracking(
+                net.eclipce.somnium.network.ProceduralStretchPacket.clear(player.getUUID()),
+                player);
+    }
 }

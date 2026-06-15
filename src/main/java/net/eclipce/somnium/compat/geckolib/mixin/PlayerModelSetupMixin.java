@@ -5,6 +5,7 @@ import net.eclipce.somnium.compat.geckolib.player.cast.CastAnimationOptions;
 import net.eclipce.somnium.compat.geckolib.player.cast.CastBodyPart;
 import net.eclipce.somnium.compat.geckolib.player.cast.SomniumCastAnimatable;
 import net.eclipce.somnium.compat.geckolib.player.cast.SomniumCastBoneApplicator;
+import net.eclipce.somnium.compat.geckolib.player.cast.SomniumProceduralStretch;
 import net.minecraft.client.model.HumanoidModel;
 import net.minecraft.client.model.PlayerModel;
 import net.minecraft.world.entity.LivingEntity;
@@ -58,13 +59,23 @@ public abstract class PlayerModelSetupMixin {
         if (animatable == null) {
             // Fast path: also accept a freshly queued animation that hasn't materialised
             // an instance yet (setAnimation() always calls getOrCreate first, so this
-            // branch is purely defensive).
-            if (!SomniumCastAnimatable.isActive(player.getUUID())) return;
+            // branch is purely defensive). Also accept an active procedural lean/stretch,
+            // which renders without any clip animatable at all.
+            if (!SomniumCastAnimatable.isActive(player.getUUID())
+                    && SomniumProceduralStretch.get(player.getUUID()) == null) return;
         } else if (animatable.getActiveAnimation() == null
                 && animatable.getHiddenBodyParts().isEmpty()
                 && animatable.getHiddenLayers().isEmpty()
                 && !animatable.needsCleanupPass()
-                && !SomniumCastAnimatable.isActive(player.getUUID())) {
+                && !SomniumCastAnimatable.isActive(player.getUUID())
+                // CRITICAL: also keep applying while a procedural lean/stretch is active. Without
+                // this, once the clip ends the guard returns early, apply() (and its per-frame
+                // SomniumBoneScaleMap.clearAll + repopulate) never runs, and the last arm scale/
+                // pitch is frozen onto the model until some other cast animation runs. That was
+                // the "arm stuck extended after the ability, only fixed by another ability" bug.
+                // Note: get() returns null the frame after the ability clears the lean, so apply()
+                // runs ONE more time then — clearing the map — before the guard finally rests.
+                && SomniumProceduralStretch.get(player.getUUID()) == null) {
             return;
         }
 

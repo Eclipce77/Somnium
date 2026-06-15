@@ -265,4 +265,23 @@ public final class SomniumAnimHelper {
                 net.eclipce.somnium.network.ProceduralStretchPacket.clear(player.getUUID()),
                 player);
     }
+
+    /**
+     * Snaps the player's body + head yaw to their current look yaw, the way a left-click
+     * face-align does. Use from code-driven abilities (e.g. the Gomu Rocket grab) that want
+     * the body — and therefore a procedurally-aimed arm — to face the aim direction, but
+     * which don't go through a clip carrying {@code onExecuteBodyAlign}.
+     *
+     * <p>Sends a rotation-only packet to the casting client (which owns its rotation) and also
+     * writes it server-side so other trackers see the new facing. No-op if already aligned.</p>
+     */
+    public static void faceLookDirection(net.minecraft.server.level.ServerPlayer player) {
+        float lookYaw = player.getYRot();
+        float delta = net.minecraft.util.Mth.degreesDifference(player.yBodyRot, lookYaw);
+        if (Math.abs(delta) <= 1.0f) return;
+        player.setYBodyRot(lookYaw);
+        player.setYHeadRot(lookYaw);
+        net.eclipce.somnium.network.SomniumNetwork.sendToClient(
+                new net.eclipce.somnium.network.BodyAlignPacket(lookYaw), player);
+    }
 }

@@ -231,36 +231,50 @@ public final class SomniumAnimHelper {
     }
 
     /**
-     * Drives a <em>procedural</em> (code-driven) limb stretch toward a world point, for reaches
-     * that can't be authored as a clip because the target is only known at runtime — e.g. the
-     * Gomu Rocket grab stretching the arm to whatever block the player aims at.
+     * Drives a code-driven <em>body lean</em>: pitches a set of body parts by {@code pitchRad}
+     * toward a direction known only at runtime — e.g. the Gomu Rocket leaning every part except
+     * the grabbing arm toward the block it's being pulled to.
      *
-     * <p>Call this every tick while the reach is changing (server-side, with a {@code ServerPlayer}).
-     * It sends the stretch to the player and everyone tracking them, so the stretch renders for
-     * all viewers. Call {@link #clearProceduralStretch} when the reach ends (release / retract).</p>
+     * <p>Call each tick while the lean angle changes (server-side); ease the angle yourself
+     * before calling so the lean is smooth. Sends to the player and all trackers so it renders
+     * for every viewer. Call {@link #clearBodyLean} when the lean ends.</p>
      *
-     * @param player      the stretching player (server-side)
-     * @param part        which limb to stretch (e.g. {@link net.eclipce.somnium.compat.geckolib.player.cast.CastBodyPart#RIGHT_ARM})
-     * @param reachBlocks shoulder→target distance in blocks; 0 means no stretch
-     * @param aimPitchRad local bone pitch (xRot) so the limb points along the look direction
-     *                    instead of hanging straight down; 0 leaves the rest orientation
-     * @param targetX     world X of the reach target (sent for future hand-orientation use)
-     * @param targetY     world Y of the reach target
-     * @param targetZ     world Z of the reach target
+     * @param player   the leaning player (server-side)
+     * @param pitchRad pitch (radians) to apply to each listed part; 0 means no lean
+     * @param parts    the parts to lean (typically everything except the active/grabbing arm)
      */
-    public static void setProceduralStretch(net.minecraft.server.level.ServerPlayer player,
-                                            net.eclipce.somnium.compat.geckolib.player.cast.CastBodyPart part,
-                                            float reachBlocks, float aimPitchRad,
-                                            double targetX, double targetY, double targetZ) {
+    public static void setBodyLean(net.minecraft.server.level.ServerPlayer player,
+                                   float pitchRad,
+                                   java.util.Set<net.eclipce.somnium.compat.geckolib.player.cast.CastBodyPart> parts) {
+        setBodyLean(player, pitchRad, parts, null, 1f, 0f);
+    }
+
+    /**
+     * As {@link #setBodyLean(net.minecraft.server.level.ServerPlayer, float, java.util.Set)} but
+     * also carries a held-arm stretch (length scale + aim pitch) on {@code armPart}, applied at
+     * the same time. Used by the Gomu Rocket flight: the body leans while the grabbing arm stays
+     * extended toward the block (the clip slot is busy with the legs propel clip).
+     *
+     * @param armPart     the arm to keep stretched, or {@code null} for none
+     * @param armScaleY   multiplicative Y length for the arm bone (1 = no stretch)
+     * @param armPitchRad aim pitch for the arm about its rest pivot (0 = rest)
+     */
+    public static void setBodyLean(net.minecraft.server.level.ServerPlayer player,
+                                   float pitchRad,
+                                   java.util.Set<net.eclipce.somnium.compat.geckolib.player.cast.CastBodyPart> parts,
+                                   @javax.annotation.Nullable net.eclipce.somnium.compat.geckolib.player.cast.CastBodyPart armPart,
+                                   float armScaleY, float armPitchRad) {
+        int mask = net.eclipce.somnium.compat.geckolib.player.cast.SomniumProceduralStretch
+                .maskFromParts(parts);
+        int armOrdinal = (armPart == null) ? -1 : armPart.ordinal();
         net.eclipce.somnium.network.SomniumNetwork.sendToTracking(
                 new net.eclipce.somnium.network.ProceduralStretchPacket(
-                        player.getUUID(), true, part.ordinal(), reachBlocks, aimPitchRad,
-                        targetX, targetY, targetZ),
+                        player.getUUID(), true, pitchRad, mask, armOrdinal, armScaleY, armPitchRad),
                 player);
     }
 
-    /** Clears any active procedural stretch for the player on the client and all trackers. */
-    public static void clearProceduralStretch(net.minecraft.server.level.ServerPlayer player) {
+    /** Clears any active body lean for the player on the client and all trackers. */
+    public static void clearBodyLean(net.minecraft.server.level.ServerPlayer player) {
         net.eclipce.somnium.network.SomniumNetwork.sendToTracking(
                 net.eclipce.somnium.network.ProceduralStretchPacket.clear(player.getUUID()),
                 player);

@@ -487,49 +487,44 @@ public final class SomniumCastBoneApplicator {
      * purely from code (no clip) still renders.</p>
      */
     private static void applyProceduralStretch(Player player, PlayerModel<?> playerModel) {
-        SomniumProceduralStretch.Stretch stretch =
+        SomniumProceduralStretch.Lean lean =
                 SomniumProceduralStretch.get(player.getUUID());
-        if (stretch == null) return;
+        if (lean == null) return;
 
-        CastBodyPart bodyPart = stretch.part;
-        ModelPart    part     = bodyPart.get(playerModel);
-
-        System.out.println("[Somnium-DIAG] applyProceduralStretch: RUNNING part=" + bodyPart
-                + " reach=" + stretch.reachBlocks + " aimPitch=" + stretch.aimPitchRad);
-
-        // ── Aim ──
-        // Use the SAME mechanism the clip-driven changeDirectionOnLook uses: register a frame
-        // rotation about the bone's REST pivot (its joint), applied by ModelPartRenderMixin
-        // BEFORE translateAndRotate. This is the proven path — a direct part.xRot write was
-        // unreliable here (it rotates about the animated/displaced pivot and other passes can
-        // reset it), which is why the arm rendered as a straight vertical pole with no aim.
-        // Rotating about the rest pivot keeps the arm attached at the shoulder and reliably
-        // angles the whole stretched limb along the aim.
-        if (stretch.aimPitchRad != 0f && bodyPart != CastBodyPart.HEAD && bodyPart != CastBodyPart.BODY) {
-            float[] rp = SomniumBoneAnchors.restPivot(bodyPart.partName());
-            SomniumBoneScaleMap.setLookPitch(part, stretch.aimPitchRad, rp[0], rp[1], rp[2]);
-
-            // Apply to the overlay sleeve/pants too, or it won't follow the rotation.
-            ModelPart overlay = overlayFor(playerModel, bodyPart);
-            if (overlay != null) {
-                SomniumBoneScaleMap.setLookPitch(overlay, stretch.aimPitchRad, rp[0], rp[1], rp[2]);
+        // ── Body lean: pitch each listed part about its rest pivot (composes with clips) ──
+        if (lean.pitchRad != 0f && !lean.parts.isEmpty()) {
+            for (CastBodyPart part : lean.parts) {
+                float[] rp = SomniumBoneAnchors.restPivot(part.partName());
+                SomniumBoneScaleMap.setLookPitch(part.get(playerModel), lean.pitchRad,
+                        rp[0], rp[1], rp[2]);
+                ModelPart overlay = overlayFor(playerModel, part);
+                if (overlay != null) {
+                    SomniumBoneScaleMap.setLookPitch(overlay, lean.pitchRad, rp[0], rp[1], rp[2]);
+                }
             }
         }
 
-        // ── Length ──
-        // Multiplicative Y-scale lengthens the (now correctly-aimed) arm toward the target.
-        // Applied to both the base part and the overlay so the sleeve stretches with the arm.
-        float yScale = SomniumProceduralStretch.reachToScale(stretch.reachBlocks);
-        if (yScale != 1f) {
-            SomniumBoneScaleMap.setScale(part, 1f, yScale, 1f);
-            ModelPart overlay = overlayFor(playerModel, bodyPart);
-            if (overlay != null) {
-                SomniumBoneScaleMap.setScale(overlay, 1f, yScale, 1f);
+        // ── Held-arm stretch: keep the grabbing arm extended + aimed during flight, when the
+        // single clip slot is busy playing the legs-only propel clip. Aim about the rest pivot,
+        // scale length along Y; applied to the base part and its overlay sleeve. ──
+        if (lean.armPart != null) {
+            ModelPart arm = lean.armPart.get(playerModel);
+            ModelPart armOverlay = overlayFor(playerModel, lean.armPart);
+
+            if (lean.armPitchRad != 0f) {
+                float[] rp = SomniumBoneAnchors.restPivot(lean.armPart.partName());
+                SomniumBoneScaleMap.setLookPitch(arm, lean.armPitchRad, rp[0], rp[1], rp[2]);
+                if (armOverlay != null) {
+                    SomniumBoneScaleMap.setLookPitch(armOverlay, lean.armPitchRad, rp[0], rp[1], rp[2]);
+                }
+            }
+            if (lean.armScaleY != 1f) {
+                SomniumBoneScaleMap.setScale(arm, 1f, lean.armScaleY, 1f);
+                if (armOverlay != null) {
+                    SomniumBoneScaleMap.setScale(armOverlay, 1f, lean.armScaleY, 1f);
+                }
             }
         }
-
-        System.out.println("[Somnium-DIAG] applyProceduralStretch: registered lookPitch="
-                + stretch.aimPitchRad + " yScale=" + yScale);
     }
 
     /**

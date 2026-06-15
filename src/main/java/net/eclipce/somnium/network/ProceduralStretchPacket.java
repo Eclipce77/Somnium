@@ -1,6 +1,5 @@
 package net.eclipce.somnium.network;
 
-import net.eclipce.somnium.compat.geckolib.player.cast.CastBodyPart;
 import net.eclipce.somnium.compat.geckolib.player.cast.SomniumProceduralStretch;
 import net.minecraft.network.FriendlyByteBuf;
 import net.minecraftforge.network.NetworkEvent;
@@ -9,15 +8,14 @@ import java.util.UUID;
 import java.util.function.Supplier;
 
 /**
- * Server → client packet that sets or clears a <em>procedural</em> (code-driven) limb stretch
- * for a player, used when a limb must reach toward a world point not known at animation-
- * authoring time (e.g. the Gomu Rocket grab stretching the arm to an aimed block).
+ * Server → client packet that sets or clears a code-driven <em>body lean</em> for a player,
+ * used to pitch a set of body parts toward a direction known only at runtime (e.g. the Gomu
+ * Rocket leaning the whole body — except the grabbing arm — toward the block it's pulling
+ * toward).
  *
- * <p>Sent with {@code SomniumNetwork.sendToTracking} so the stretch renders on the casting
- * player for everyone who can see them (first- and third-person), not just the caster. The
- * client handler stores it in {@link SomniumProceduralStretch}, which
- * {@code SomniumCastBoneApplicator} reads each frame and folds into the existing per-bone
- * scale channel.</p>
+ * <p>Sent with {@code SomniumNetwork.sendToTracking} so the lean renders on the player for all
+ * viewers. The client handler stores it in {@link SomniumProceduralStretch}, which
+ * {@code SomniumCastBoneApplicator} reads each frame.</p>
  *
  * <h3>Registration</h3>
  * <pre>{@code
@@ -30,64 +28,65 @@ import java.util.function.Supplier;
  */
 public class ProceduralStretchPacket {
 
-    private final UUID player;
-    private final boolean active;       // false => clear the stretch for this player
-    private final int     partOrdinal;  // CastBodyPart ordinal (only read when active)
-    private final float   reachBlocks;
-    private final float   aimPitchRad;
-    private final double  targetX, targetY, targetZ;
+    private final UUID    player;
+    private final boolean active;     // false => clear the lean for this player
+    private final float   pitchRad;   // lean pitch applied to each part in the mask
+    private final int     partsMask;  // bitmask of CastBodyPart ordinals to lean
+    private final int     armOrdinal; // CastBodyPart ordinal of the held arm, or -1 for none
+    private final float   armScaleY;  // arm length scale (Y)
+    private final float   armPitchRad;// arm aim pitch
 
-    public ProceduralStretchPacket(UUID player, boolean active, int partOrdinal,
-                                   float reachBlocks, float aimPitchRad,
-                                   double targetX, double targetY, double targetZ) {
+    public ProceduralStretchPacket(UUID player, boolean active, float pitchRad, int partsMask,
+                                   int armOrdinal, float armScaleY, float armPitchRad) {
         this.player = player;
         this.active = active;
-        this.partOrdinal = partOrdinal;
-        this.reachBlocks = reachBlocks;
-        this.aimPitchRad = aimPitchRad;
-        this.targetX = targetX;
-        this.targetY = targetY;
-        this.targetZ = targetZ;
+        this.pitchRad = pitchRad;
+        this.partsMask = partsMask;
+        this.armOrdinal = armOrdinal;
+        this.armScaleY = armScaleY;
+        this.armPitchRad = armPitchRad;
     }
 
     /** Convenience factory for a clear packet. */
     public static ProceduralStretchPacket clear(UUID player) {
-        return new ProceduralStretchPacket(player, false, 0, 0f, 0f, 0, 0, 0);
+        return new ProceduralStretchPacket(player, false, 0f, 0, -1, 1f, 0f);
     }
 
     public void encode(FriendlyByteBuf buf) {
         buf.writeUUID(player);
         buf.writeBoolean(active);
-        buf.writeVarInt(partOrdinal);
-        buf.writeFloat(reachBlocks);
-        buf.writeFloat(aimPitchRad);
-        buf.writeDouble(targetX);
-        buf.writeDouble(targetY);
-        buf.writeDouble(targetZ);
+        buf.writeFloat(pitchRad);
+        buf.writeVarInt(partsMask);
+        buf.writeVarInt(armOrdinal);
+        buf.writeFloat(armScaleY);
+        buf.writeFloat(armPitchRad);
     }
 
     public static ProceduralStretchPacket decode(FriendlyByteBuf buf) {
         return new ProceduralStretchPacket(
                 buf.readUUID(),
                 buf.readBoolean(),
+                buf.readFloat(),
+                buf.readVarInt(),
                 buf.readVarInt(),
                 buf.readFloat(),
-                buf.readFloat(),
-                buf.readDouble(),
-                buf.readDouble(),
-                buf.readDouble());
+                buf.readFloat());
     }
 
     public void handle(Supplier<NetworkEvent.Context> ctx) {
         NetworkEvent.Context context = ctx.get();
         // PLAY_TO_CLIENT: runs client-side on the main thread (consumerMainThread).
         if (active) {
-            CastBodyPart[] parts = CastBodyPart.values();
-            CastBodyPart part = (partOrdinal >= 0 && partOrdinal < parts.length)
-                    ? parts[partOrdinal] : CastBodyPart.RIGHT_ARM;
+            net.eclipce.somnium.compat.geckolib.player.cast.CastBodyPart armPart = null;
+            if (armOrdinal >= 0) {
+                net.eclipce.somnium.compat.geckolib.player.cast.CastBodyPart[] all =
+                        net.eclipce.somnium.compat.geckolib.player.cast.CastBodyPart.values();
+                if (armOrdinal < all.length) armPart = all[armOrdinal];
+            }
             SomniumProceduralStretch.set(player,
-                    new SomniumProceduralStretch.Stretch(part, reachBlocks, aimPitchRad,
-                            targetX, targetY, targetZ));
+                    new SomniumProceduralStretch.Lean(pitchRad,
+                            SomniumProceduralStretch.partsFromMask(partsMask),
+                            armPart, armScaleY, armPitchRad));
         } else {
             SomniumProceduralStretch.clear(player);
         }

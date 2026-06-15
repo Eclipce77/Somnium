@@ -491,12 +491,29 @@ public final class SomniumCastBoneApplicator {
                 SomniumProceduralStretch.get(player.getUUID());
         if (stretch == null) return;
 
-        float yScale = SomniumProceduralStretch.reachToScale(stretch.reachBlocks);
-        if (yScale == 1f) return;
-
         ModelPart part = stretch.part.get(playerModel);
-        // Length along Y only — keep girth (X/Z) at 1 so it reads as a rubber stretch.
-        SomniumBoneScaleMap.setScale(part, 1f, yScale, 1f);
+
+        // ── Aim ──
+        // The arm rests pointing straight DOWN (+Y local, xRot 0). Scaling Y alone would just
+        // make it a longer downward pole (the reported bug). To make it reach along the look
+        // direction we first rotate it to the supplied aim pitch. We OVERWRITE xRot (not +=)
+        // because the rocket arm is fully owned by this stretch — vanilla locomotion swing on
+        // this arm is suppressed by the ability's options, so there's no pose to preserve.
+        // zRot/yRot are zeroed so the arm lies in the body's forward plane (body yaw already
+        // faces the look direction via onExecuteBodyAlign, so no local yaw is needed).
+        if (stretch.aimPitchRad != 0f) {
+            part.xRot = stretch.aimPitchRad;
+            part.yRot = 0f;
+            part.zRot = 0f;
+        }
+
+        // ── Length ──
+        // Multiplicative Y-scale lengthens the (now correctly-aimed) arm toward the target.
+        float yScale = SomniumProceduralStretch.reachToScale(stretch.reachBlocks);
+        if (yScale != 1f) {
+            // Length along Y only — keep girth (X/Z) at 1 so it reads as a rubber stretch.
+            SomniumBoneScaleMap.setScale(part, 1f, yScale, 1f);
+        }
     }
 
     /**

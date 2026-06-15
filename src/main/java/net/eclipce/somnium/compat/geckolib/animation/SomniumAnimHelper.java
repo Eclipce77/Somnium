@@ -242,17 +242,19 @@ public final class SomniumAnimHelper {
      * @param player      the stretching player (server-side)
      * @param part        which limb to stretch (e.g. {@link net.eclipce.somnium.compat.geckolib.player.cast.CastBodyPart#RIGHT_ARM})
      * @param reachBlocks shoulder→target distance in blocks; 0 means no stretch
+     * @param aimPitchRad local bone pitch (xRot) so the limb points along the look direction
+     *                    instead of hanging straight down; 0 leaves the rest orientation
      * @param targetX     world X of the reach target (sent for future hand-orientation use)
      * @param targetY     world Y of the reach target
      * @param targetZ     world Z of the reach target
      */
     public static void setProceduralStretch(net.minecraft.server.level.ServerPlayer player,
                                             net.eclipce.somnium.compat.geckolib.player.cast.CastBodyPart part,
-                                            float reachBlocks,
+                                            float reachBlocks, float aimPitchRad,
                                             double targetX, double targetY, double targetZ) {
         net.eclipce.somnium.network.SomniumNetwork.sendToTracking(
                 new net.eclipce.somnium.network.ProceduralStretchPacket(
-                        player.getUUID(), true, part.ordinal(), reachBlocks,
+                        player.getUUID(), true, part.ordinal(), reachBlocks, aimPitchRad,
                         targetX, targetY, targetZ),
                 player);
     }

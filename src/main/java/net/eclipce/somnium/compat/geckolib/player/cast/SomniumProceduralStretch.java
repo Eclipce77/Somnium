@@ -46,12 +46,14 @@ public final class SomniumProceduralStretch {
     public static final class Stretch {
         public final CastBodyPart part;
         public final float reachBlocks;     // shoulder→target distance, clamped to the ability's max
+        public final float aimPitchRad;     // local bone pitch (xRot) so the limb points along look
         public final double targetX, targetY, targetZ;
 
-        public Stretch(CastBodyPart part, float reachBlocks,
+        public Stretch(CastBodyPart part, float reachBlocks, float aimPitchRad,
                        double targetX, double targetY, double targetZ) {
             this.part = part;
             this.reachBlocks = reachBlocks;
+            this.aimPitchRad = aimPitchRad;
             this.targetX = targetX;
             this.targetY = targetY;
             this.targetZ = targetZ;

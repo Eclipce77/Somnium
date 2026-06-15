@@ -34,15 +34,17 @@ public class ProceduralStretchPacket {
     private final boolean active;       // false => clear the stretch for this player
     private final int     partOrdinal;  // CastBodyPart ordinal (only read when active)
     private final float   reachBlocks;
+    private final float   aimPitchRad;
     private final double  targetX, targetY, targetZ;
 
     public ProceduralStretchPacket(UUID player, boolean active, int partOrdinal,
-                                   float reachBlocks,
+                                   float reachBlocks, float aimPitchRad,
                                    double targetX, double targetY, double targetZ) {
         this.player = player;
         this.active = active;
         this.partOrdinal = partOrdinal;
         this.reachBlocks = reachBlocks;
+        this.aimPitchRad = aimPitchRad;
         this.targetX = targetX;
         this.targetY = targetY;
         this.targetZ = targetZ;
@@ -50,7 +52,7 @@ public class ProceduralStretchPacket {
 
     /** Convenience factory for a clear packet. */
     public static ProceduralStretchPacket clear(UUID player) {
-        return new ProceduralStretchPacket(player, false, 0, 0f, 0, 0, 0);
+        return new ProceduralStretchPacket(player, false, 0, 0f, 0f, 0, 0, 0);
     }
 
     public void encode(FriendlyByteBuf buf) {
@@ -58,6 +60,7 @@ public class ProceduralStretchPacket {
         buf.writeBoolean(active);
         buf.writeVarInt(partOrdinal);
         buf.writeFloat(reachBlocks);
+        buf.writeFloat(aimPitchRad);
         buf.writeDouble(targetX);
         buf.writeDouble(targetY);
         buf.writeDouble(targetZ);
@@ -68,6 +71,7 @@ public class ProceduralStretchPacket {
                 buf.readUUID(),
                 buf.readBoolean(),
                 buf.readVarInt(),
+                buf.readFloat(),
                 buf.readFloat(),
                 buf.readDouble(),
                 buf.readDouble(),
@@ -82,7 +86,7 @@ public class ProceduralStretchPacket {
             CastBodyPart part = (partOrdinal >= 0 && partOrdinal < parts.length)
                     ? parts[partOrdinal] : CastBodyPart.RIGHT_ARM;
             SomniumProceduralStretch.set(player,
-                    new SomniumProceduralStretch.Stretch(part, reachBlocks,
+                    new SomniumProceduralStretch.Stretch(part, reachBlocks, aimPitchRad,
                             targetX, targetY, targetZ));
         } else {
             SomniumProceduralStretch.clear(player);

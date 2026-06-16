@@ -504,12 +504,21 @@ public final class SomniumCastBoneApplicator {
             }
         }
 
-        // ── Held-arm stretch: keep the grabbing arm extended + aimed during flight, when the
-        // single clip slot is busy playing the legs-only propel clip. Aim about the rest pivot,
-        // scale length along Y; applied to the base part and its overlay sleeve. ──
+        // ── Held-arm stretch: keep the grabbing arm extended + aimed during flight/hold, when
+        // the single clip slot is busy (or no clip drives the arm). ──
         if (lean.armPart != null) {
             ModelPart arm = lean.armPart.get(playerModel);
             ModelPart armOverlay = overlayFor(playerModel, lean.armPart);
+
+            // CRITICAL: reset the arm to its REST pose first. Vanilla PlayerModel.setupAnim has
+            // already written this frame's locomotion pose (idle sway / walk swing / look) onto
+            // the arm; without wiping it, our aim rotation and Y-scale would compose on top of an
+            // uncontrolled, every-frame-changing orientation — which is exactly why the arm went
+            // wild after the clip ended. resetPose() gives a known base (arm hanging straight
+            // down, all rotations 0), so the aim below is absolute and stable. Same call the clip
+            // path uses via suppressVanillaAnimOn. Arm-agnostic: works for RIGHT_ARM or LEFT_ARM.
+            arm.resetPose();
+            if (armOverlay != null) armOverlay.resetPose();
 
             if (lean.armPitchRad != 0f) {
                 float[] rp = SomniumBoneAnchors.restPivot(lean.armPart.partName());

@@ -37,6 +37,14 @@ import java.util.Optional;
  */
 public final class SomniumCastBoneApplicator {
 
+    /**
+     * Local-Y anchor for stretching an arm: the vanilla arm cube spans local Y from -2 (a 2-unit
+     * shoulder cap above the pivot) to +10. Scaling about y=-2 (the cap's top face) keeps the
+     * shoulder end planted so a stretched arm extends only away from the joint and its back stays
+     * flush with the body, instead of jutting up past the shoulder.
+     */
+    private static final float ARM_SCALE_ANCHOR_Y = -2f;
+
     private static final Logger LOGGER = LogUtils.getLogger();
 
     // ── Probe state (diagnostic only) ──
@@ -528,9 +536,13 @@ public final class SomniumCastBoneApplicator {
                 }
             }
             if (lean.armScaleY != 1f) {
-                SomniumBoneScaleMap.setScale(arm, 1f, lean.armScaleY, 1f);
+                // Anchor the stretch at the arm cube's shoulder-cap face (local y = -2), not the
+                // pivot, so the back of the arm stays planted at the shoulder instead of jutting
+                // up past it as it lengthens. See SomniumBoneScaleMap.setScale anchor docs.
+                SomniumBoneScaleMap.setScale(arm, 1f, lean.armScaleY, 1f, 0f, ARM_SCALE_ANCHOR_Y, 0f);
                 if (armOverlay != null) {
-                    SomniumBoneScaleMap.setScale(armOverlay, 1f, lean.armScaleY, 1f);
+                    SomniumBoneScaleMap.setScale(armOverlay, 1f, lean.armScaleY, 1f,
+                            0f, ARM_SCALE_ANCHOR_Y, 0f);
                 }
             }
         }

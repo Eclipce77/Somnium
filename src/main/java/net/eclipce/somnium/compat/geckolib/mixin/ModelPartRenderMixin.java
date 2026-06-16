@@ -107,6 +107,17 @@ public class ModelPartRenderMixin {
         float[] scale = SomniumBoneScaleMap.getScale((ModelPart) (Object) this);
         if (scale == null) return;
 
-        poseStack.scale(scale[0], scale[1], scale[2]);
+        // Scale about the anchor (scale[3..5], local model units) rather than the part origin.
+        // For an unset anchor this is (0,0,0) and reduces to a plain poseStack.scale(). Anchoring
+        // at e.g. the arm's shoulder-cap face keeps a stretched limb planted at the joint instead
+        // of jutting back past it (vanilla limb cubes aren't centred on their pivot).
+        float ax = scale[3], ay = scale[4], az = scale[5];
+        if (ax != 0f || ay != 0f || az != 0f) {
+            poseStack.translate(ax, ay, az);
+            poseStack.scale(scale[0], scale[1], scale[2]);
+            poseStack.translate(-ax, -ay, -az);
+        } else {
+            poseStack.scale(scale[0], scale[1], scale[2]);
+        }
     }
 }

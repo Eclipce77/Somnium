@@ -56,14 +56,34 @@ public final class SomniumBoneScaleMap {
      * is multiplied into, so multiple animations compose.</p>
      */
     public static void setScale(ModelPart part, float sx, float sy, float sz) {
+        setScale(part, sx, sy, sz, 0f, 0f, 0f);
+    }
+
+    /**
+     * As {@link #setScale(ModelPart, float, float, float)} but scales about an explicit anchor
+     * point (in the part's local model units) instead of the part origin/pivot.
+     *
+     * <p>Why this matters: vanilla limb cubes are not centred on their pivot. The arm cube spans
+     * local Y from -2 (a 2-unit shoulder cap ABOVE the pivot) to +10 (down the arm). Scaling Y
+     * about the pivot (y=0) magnifies that 2-unit overhang — at 32x it juts 64 units up past the
+     * shoulder, so the back of a stretched arm lifts off the body. Anchoring the scale at the
+     * cube's top face (y=-2 → anchor (0,-2,0)) keeps the shoulder end planted and stretches the
+     * limb only away from the joint, matching how the authored clips sit flush.</p>
+     */
+    public static void setScale(ModelPart part, float sx, float sy, float sz,
+                                float ax, float ay, float az) {
         if (sx == 1f && sy == 1f && sz == 1f) return;
         float[] existing = SCALE_MAP.get(part);
         if (existing != null) {
             existing[0] *= sx;
             existing[1] *= sy;
             existing[2] *= sz;
+            // Anchor is a property of the stretch, not multiplicative — last writer sets it.
+            existing[3] = ax;
+            existing[4] = ay;
+            existing[5] = az;
         } else {
-            SCALE_MAP.put(part, new float[]{sx, sy, sz});
+            SCALE_MAP.put(part, new float[]{sx, sy, sz, ax, ay, az});
         }
     }
 

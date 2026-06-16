@@ -35,9 +35,11 @@ public class ProceduralStretchPacket {
     private final int     armOrdinal; // CastBodyPart ordinal of the held arm, or -1 for none
     private final float   armScaleY;  // arm length scale (Y)
     private final float   armPitchRad;// arm aim pitch
+    private final boolean clearClip;  // if true, also end any active cast clip for this player
 
     public ProceduralStretchPacket(UUID player, boolean active, float pitchRad, int partsMask,
-                                   int armOrdinal, float armScaleY, float armPitchRad) {
+                                   int armOrdinal, float armScaleY, float armPitchRad,
+                                   boolean clearClip) {
         this.player = player;
         this.active = active;
         this.pitchRad = pitchRad;
@@ -45,11 +47,17 @@ public class ProceduralStretchPacket {
         this.armOrdinal = armOrdinal;
         this.armScaleY = armScaleY;
         this.armPitchRad = armPitchRad;
+        this.clearClip = clearClip;
     }
 
     /** Convenience factory for a clear packet. */
     public static ProceduralStretchPacket clear(UUID player) {
-        return new ProceduralStretchPacket(player, false, 0f, 0, -1, 1f, 0f);
+        return new ProceduralStretchPacket(player, false, 0f, 0, -1, 1f, 0f, false);
+    }
+
+    /** Packet that ends the active cast clip for a player (without touching the lean). */
+    public static ProceduralStretchPacket clearClip(UUID player) {
+        return new ProceduralStretchPacket(player, false, 0f, 0, -1, 1f, 0f, true);
     }
 
     public void encode(FriendlyByteBuf buf) {
@@ -60,6 +68,7 @@ public class ProceduralStretchPacket {
         buf.writeVarInt(armOrdinal);
         buf.writeFloat(armScaleY);
         buf.writeFloat(armPitchRad);
+        buf.writeBoolean(clearClip);
     }
 
     public static ProceduralStretchPacket decode(FriendlyByteBuf buf) {
@@ -70,12 +79,17 @@ public class ProceduralStretchPacket {
                 buf.readVarInt(),
                 buf.readVarInt(),
                 buf.readFloat(),
-                buf.readFloat());
+                buf.readFloat(),
+                buf.readBoolean());
     }
 
     public void handle(Supplier<NetworkEvent.Context> ctx) {
         NetworkEvent.Context context = ctx.get();
         // PLAY_TO_CLIENT: runs client-side on the main thread (consumerMainThread).
+        if (clearClip) {
+            net.eclipce.somnium.compat.geckolib.player.cast.SomniumCastAnimatable
+                    .clearPlayer(player);
+        }
         if (active) {
             net.eclipce.somnium.compat.geckolib.player.cast.CastBodyPart armPart = null;
             if (armOrdinal >= 0) {

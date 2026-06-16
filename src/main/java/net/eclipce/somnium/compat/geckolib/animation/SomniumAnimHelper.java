@@ -269,7 +269,20 @@ public final class SomniumAnimHelper {
         int armOrdinal = (armPart == null) ? -1 : armPart.ordinal();
         net.eclipce.somnium.network.SomniumNetwork.sendToTracking(
                 new net.eclipce.somnium.network.ProceduralStretchPacket(
-                        player.getUUID(), true, pitchRad, mask, armOrdinal, armScaleY, armPitchRad),
+                        player.getUUID(), true, pitchRad, mask, armOrdinal, armScaleY, armPitchRad,
+                        false),
+                player);
+    }
+
+    /**
+     * Ends any active cast clip for the player on the client and all trackers, without touching
+     * an active procedural lean/stretch. Use to hand a body part off from a clip to the
+     * procedural channel cleanly — e.g. the Gomu Rocket switching the arm from the extend clip to
+     * code-driven control at grab, so the two don't both drive (and multiply) the arm scale.
+     */
+    public static void clearCastClip(net.minecraft.server.level.ServerPlayer player) {
+        net.eclipce.somnium.network.SomniumNetwork.sendToTracking(
+                net.eclipce.somnium.network.ProceduralStretchPacket.clearClip(player.getUUID()),
                 player);
     }
 

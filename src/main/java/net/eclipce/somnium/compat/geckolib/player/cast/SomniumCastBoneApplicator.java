@@ -38,12 +38,17 @@ import java.util.Optional;
 public final class SomniumCastBoneApplicator {
 
     /**
-     * Local-Y anchor for stretching an arm: the vanilla arm cube spans local Y from -2 (a 2-unit
-     * shoulder cap above the pivot) to +10. Scaling about y=-2 (the cap's top face) keeps the
-     * shoulder end planted so a stretched arm extends only away from the joint and its back stays
-     * flush with the body, instead of jutting up past the shoulder.
+     * Block-unit Y anchor for stretching an arm. The vanilla arm cube spans local Y from -2 (a
+     * 2-unit shoulder cap above the pivot) to +10 in MODEL units; scaling about y=-2 (the cap's
+     * top face) keeps the shoulder end planted so a stretched arm extends only away from the
+     * joint and its back stays flush with the body.
+     *
+     * <p><b>Units:</b> the render PoseStack at the scale-injection point is in BLOCK units (the
+     * same space the look-pitch rest pivot uses, e.g. -5/16). So the model-unit value -2 must be
+     * divided by 16. Using the raw -2 translated the arm a full 2 blocks away — which flung it
+     * out of frame on long stretches and detached it on short ones.</p>
      */
-    private static final float ARM_SCALE_ANCHOR_Y = -2f;
+    private static final float ARM_SCALE_ANCHOR_Y = -2f / 16f;
 
     private static final Logger LOGGER = LogUtils.getLogger();
 

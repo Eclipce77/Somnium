@@ -138,6 +138,25 @@ public abstract class PlayerModelSetupMixin {
             self.rightArm.visible = showRight;
             self.leftArm.visible  = showLeft;
 
+            // Additionally hide an arm that is being PROCEDURALLY STRETCHED (e.g. the Gomu
+            // Rocket grab). A stretched arm originates at the shoulder, which in first person
+            // sits right at the camera, so any large Y-scale turns it into a beam filling the
+            // entire view. The stretch is meant for the third-person silhouette; in FP the
+            // player should see past it. (Third-person rendering is unaffected — this branch
+            // only runs during the FP re-render.)
+            net.eclipce.somnium.compat.geckolib.player.cast.SomniumProceduralStretch.Lean lean =
+                    net.eclipce.somnium.compat.geckolib.player.cast.SomniumProceduralStretch
+                            .get(player.getUUID());
+            if (lean != null && lean.armPart != null && lean.armScaleY > 1.05f) {
+                if (lean.armPart == CastBodyPart.RIGHT_ARM) {
+                    self.rightArm.visible = false;
+                    self.rightSleeve.visible = false;
+                } else if (lean.armPart == CastBodyPart.LEFT_ARM) {
+                    self.leftArm.visible = false;
+                    self.leftSleeve.visible = false;
+                }
+            }
+
             // Sleeve visibility must respect hideLayer: a sleeve shows only if its arm is
             // shown AND the animation did not request that sleeve hidden. Without the
             // hideLayer check this line was overwriting the visible=false that

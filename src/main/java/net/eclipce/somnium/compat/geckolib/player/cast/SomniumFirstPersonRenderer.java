@@ -127,11 +127,18 @@ public final class SomniumFirstPersonRenderer {
         if (player == null) return;
 
         SomniumCastAnimatable animatable = SomniumCastAnimatable.getOrNull(player.getUUID());
-        if (animatable == null) return;
-        if (animatable.getActiveAnimation() == null) return;
 
-        CastAnimationOptions options = animatable.getCurrentOptions();
-        if (!options.showInFirstPerson()) return;
+        // The FP re-render should engage when EITHER a showInFirstPerson clip is active, OR a
+        // procedural stretch/lean is active (e.g. the Gomu Rocket GRABBED hold, where the clip
+        // has been cleared but the arm is still stretched via the procedural channel). Without
+        // the procedural trigger, that phase has no active clip, the re-render doesn't run, and
+        // vanilla draws the stretched arm across the screen.
+        boolean clipFp = animatable != null
+                && animatable.getActiveAnimation() != null
+                && animatable.getCurrentOptions().showInFirstPerson();
+        boolean proceduralFp = net.eclipce.somnium.compat.geckolib.player.cast
+                .SomniumProceduralStretch.get(player.getUUID()) != null;
+        if (!clipFp && !proceduralFp) return;
 
         // Arm the vanilla-hand suppression grace: as long as this FP cast is live, keep
         // vanilla hands suppressed for a few frames PAST the point the animation ends, so
@@ -227,8 +234,17 @@ public final class SomniumFirstPersonRenderer {
             return;
         }
 
-        if (animatable == null) return;
-        if (animatable.getActiveAnimation() == null) return;
+        if (animatable == null || animatable.getActiveAnimation() == null) {
+            // No active clip — but if a procedural stretch is active (e.g. Gomu Rocket GRABBED
+            // hold), still cancel vanilla's screen-space hands. The FP body re-render draws the
+            // (hidden) arm instead, so without this cancel vanilla would draw the stretched arm
+            // straight across the screen.
+            if (net.eclipce.somnium.compat.geckolib.player.cast.SomniumProceduralStretch
+                    .get(player.getUUID()) != null) {
+                event.setCanceled(true);
+            }
+            return;
+        }
 
         CastAnimationOptions options = animatable.getCurrentOptions();
 

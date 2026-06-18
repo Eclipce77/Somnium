@@ -89,6 +89,12 @@ public class ProceduralStretchPacket {
         if (clearClip) {
             net.eclipce.somnium.compat.geckolib.player.cast.SomniumCastAnimatable
                     .clearPlayer(player);
+            // Also wipe the bone scale map. A clip that held its last frame may have written
+            // look-pitch/scale entries (e.g. changeDirectionOnLook tilt) into the map; once the
+            // instance is removed the applicator's guard early-returns and never runs clearAll()
+            // again, so without this the arm freezes in the held clip pose. Clearing here lets
+            // vanilla setupAnim drive the arm back to rest next frame.
+            net.eclipce.somnium.compat.geckolib.player.cast.SomniumBoneScaleMap.clearAll();
         }
         if (active) {
             net.eclipce.somnium.compat.geckolib.player.cast.CastBodyPart armPart = null;

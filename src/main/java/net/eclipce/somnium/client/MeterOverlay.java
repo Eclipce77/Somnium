@@ -123,6 +123,83 @@ public class MeterOverlay implements IGuiOverlay {
         // Render stamina
         net.eclipce.somnium.core.meter.StaminaData stamina = data.getStaminaData();
         renderStamina(graphics, staminaX, staminaY, stamina);
+
+        // Render custom meters — stacked sideways from stamina (toward screen
+        // centre), or at a definition's fixed screenPosition if it has one.
+        int index = 1;
+        for (MeterDefinition def : MeterDefinition.getAll()) {
+            MeterInstance meter = data.getMeterIfPresent(def.getId());
+            if (meter == null) continue;               // player never touched this meter
+            if (!isVisible(def, data)) continue;
+
+            int meterX;
+            int meterY;
+            int[] fixed = def.getScreenPosition();
+            if (fixed != null && fixed.length == 2) {
+                meterX = fixed[0];
+                meterY = fixed[1];
+            } else {
+                int step = (TEX_WIDTH + METER_GAP) * index;
+                meterX = position.isRight() ? staminaX - step : staminaX + step;
+                meterY = staminaY;
+                index++;
+            }
+
+            renderCustomMeter(graphics, meterX, meterY, def, meter);
+        }
+    }
+
+    /**
+     * Evaluates a definition's {@link MeterDefinition.VisibilityMode} against the
+     * local player's synced data.
+     */
+    private static boolean isVisible(MeterDefinition def, SomniumPlayerData data) {
+        return switch (def.getVisibilityMode()) {
+            case ALWAYS -> true;
+            case POWER_ACTIVE -> def.getVisibilityKey() != null
+                    && data.getGrantedPowerKeys().contains(def.getVisibilityKey());
+            case TRANSFORMATION_ACTIVE -> data.hasActiveTransformation();
+            case TAG_PRESENT -> def.getVisibilityKey() != null
+                    && data.hasTag(def.getVisibilityKey());
+        };
+    }
+
+    /**
+     * Renders one custom meter: frame, then bottom-to-top fill tinted by the
+     * definition's color. Uses the definition's frame/fill textures when set,
+     * falling back to the defaults.
+     */
+    private void renderCustomMeter(GuiGraphics graphics, int x, int y,
+                                   MeterDefinition def, MeterInstance meter) {
+        ResourceLocation frame = def.getFrameTexture() != null ? def.getFrameTexture() : DEFAULT_FRAME;
+        ResourceLocation fill = def.getFillTexture() != null ? def.getFillTexture() : DEFAULT_FILL;
+
+        // Layer 1: Frame
+        RenderSystem.enableBlend();
+        graphics.blit(frame, x, y,
+                0, 0, TEX_WIDTH, TEX_HEIGHT,
+                TEX_WIDTH, TEX_HEIGHT);
+
+        // Layer 2: Fill (tinted, bottom-to-top)
+        float fraction = Math.max(0f, Math.min(1f, meter.getFraction()));
+        int fillPixels = Math.round(TEX_HEIGHT * fraction);
+        if (fillPixels > 0) {
+            int color = def.getColor();
+            float r = ((color >> 16) & 0xFF) / 255f;
+            float g = ((color >> 8) & 0xFF) / 255f;
+            float b = (color & 0xFF) / 255f;
+            graphics.setColor(r, g, b, 1f);
+
+            int fillStartY = y + TEX_HEIGHT - fillPixels;
+            int texV = TEX_HEIGHT - fillPixels;
+            graphics.blit(fill, x, fillStartY,
+                    0, texV,
+                    TEX_WIDTH, fillPixels,
+                    TEX_WIDTH, TEX_HEIGHT);
+
+            graphics.setColor(1f, 1f, 1f, 1f);
+        }
+        RenderSystem.disableBlend();
     }
 
     /** Ticks per minute — used to calculate overuse timer fraction. */

@@ -463,20 +463,46 @@ public class AbilityType {
 
     /**
      * Checks if the player can afford all meter costs for this ability.
+     * Legacy overload without player context — the
+     * {@link net.eclipce.somnium.event.AbilityMeterCostEvent} still fires,
+     * with a null player. Prefer the player-aware overload.
      *
      * @param data the player's data
      * @return true if all meter requirements are met
      */
     public boolean canAffordMeterCosts(net.eclipce.somnium.core.data.SomniumPlayerData data) {
+        return canAffordMeterCosts(data, null);
+    }
+
+    /**
+     * Checks if the player can afford all meter costs for this ability.
+     *
+     * <p>Fires {@link net.eclipce.somnium.event.AbilityMeterCostEvent} for each
+     * DRAIN cost so addons can scale costs per player (e.g. proficiency-based
+     * efficiency). The multiplier scales both the drain amount and the
+     * required-minimum gate, so this check always agrees with
+     * {@link #applyMeterCosts(net.eclipce.somnium.core.data.SomniumPlayerData, net.minecraft.server.level.ServerPlayer)}.</p>
+     *
+     * @param data   the player's data
+     * @param player the activating player; nullable in legacy call paths
+     * @return true if all meter requirements are met
+     */
+    public boolean canAffordMeterCosts(net.eclipce.somnium.core.data.SomniumPlayerData data,
+                                       @Nullable net.minecraft.server.level.ServerPlayer player) {
         if (staminaCost != null) {
-            if (!data.getStaminaData().canAfford(staminaCost.getRequiredMinimum())) {
+            float mult = fireCostEvent(player, data, null, staminaCost);
+            if (!data.getStaminaData().canAfford(staminaCost.scaledRequiredMinimum(mult))) {
                 return false;
             }
         }
         for (java.util.Map.Entry<ResourceLocation, net.eclipce.somnium.core.meter.MeterCost> entry
                 : meterCosts.entrySet()) {
             net.eclipce.somnium.core.meter.MeterInstance meter = data.getMeter(entry.getKey());
-            if (meter == null || !entry.getValue().canActivate(meter)) {
+            if (meter == null) {
+                return false;
+            }
+            float mult = fireCostEvent(player, data, entry.getKey(), entry.getValue());
+            if (!entry.getValue().canActivate(meter, mult)) {
                 return false;
             }
         }
@@ -484,25 +510,59 @@ public class AbilityType {
     }
 
     /**
-     * Applies all meter costs. Call after successful activation.
+     * Applies all meter costs. Legacy overload without player context.
+     * Prefer the player-aware overload.
      *
      * @param data the player's data
      */
     public void applyMeterCosts(net.eclipce.somnium.core.data.SomniumPlayerData data) {
+        applyMeterCosts(data, null);
+    }
+
+    /**
+     * Applies all meter costs. Call after successful activation. Fires
+     * {@link net.eclipce.somnium.event.AbilityMeterCostEvent} per DRAIN cost;
+     * see the afford-check overload for the contract.
+     *
+     * @param data   the player's data
+     * @param player the activating player; nullable in legacy call paths
+     */
+    public void applyMeterCosts(net.eclipce.somnium.core.data.SomniumPlayerData data,
+                                @Nullable net.minecraft.server.level.ServerPlayer player) {
         if (staminaCost != null) {
+            float mult = fireCostEvent(player, data, null, staminaCost);
             if (staminaCost.isOveruseExempt()) {
-                data.getStaminaData().drainWithoutOveruse(staminaCost.getAmount());
+                data.getStaminaData().drainWithoutOveruse(staminaCost.scaledAmount(mult));
             } else {
-                data.getStaminaData().drain(staminaCost.getAmount());
+                data.getStaminaData().drain(staminaCost.scaledAmount(mult));
             }
         }
         for (java.util.Map.Entry<ResourceLocation, net.eclipce.somnium.core.meter.MeterCost> entry
                 : meterCosts.entrySet()) {
             net.eclipce.somnium.core.meter.MeterInstance meter = data.getMeter(entry.getKey());
             if (meter != null) {
-                entry.getValue().apply(meter);
+                float mult = fireCostEvent(player, data, entry.getKey(), entry.getValue());
+                entry.getValue().apply(meter, mult);
             }
         }
+    }
+
+    /**
+     * Posts an {@link net.eclipce.somnium.event.AbilityMeterCostEvent} for a
+     * single cost and returns the resulting multiplier. Non-DRAIN operations
+     * never fire (they can't be scaled) and always return 1.0.
+     */
+    private float fireCostEvent(@Nullable net.minecraft.server.level.ServerPlayer player,
+                                net.eclipce.somnium.core.data.SomniumPlayerData data,
+                                @Nullable ResourceLocation meterId,
+                                net.eclipce.somnium.core.meter.MeterCost cost) {
+        if (cost.getOperation() != net.eclipce.somnium.core.meter.MeterCost.Operation.DRAIN) {
+            return 1.0f;
+        }
+        net.eclipce.somnium.event.AbilityMeterCostEvent event =
+                new net.eclipce.somnium.event.AbilityMeterCostEvent(player, data, this, meterId, cost);
+        net.minecraftforge.common.MinecraftForge.EVENT_BUS.post(event);
+        return event.getMultiplier();
     }
 
     // ═══════════════════════════════════════════════════════════════════

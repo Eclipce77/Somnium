@@ -76,10 +76,37 @@ public class MeterCost {
     public boolean isOveruseExempt() { return overuseExempt; }
 
     /**
+     * The drain amount after a per-player multiplier (see
+     * {@link net.eclipce.somnium.event.AbilityMeterCostEvent}). Only DRAIN
+     * costs scale — for all other operations the multiplier is ignored.
+     */
+    public float scaledAmount(float multiplier) {
+        return operation == Operation.DRAIN ? amount * multiplier : amount;
+    }
+
+    /**
+     * The required minimum after a per-player multiplier. Scales with the same
+     * multiplier as the amount so the activation gate and the actual drain
+     * always agree. Only DRAIN costs scale.
+     */
+    public float scaledRequiredMinimum(float multiplier) {
+        return operation == Operation.DRAIN ? requiredMinimum * multiplier : requiredMinimum;
+    }
+
+    /**
      * Checks if the meter has enough value to activate.
      */
     public boolean canActivate(MeterInstance meter) {
-        if (requiredMinimum > 0 && meter.getValue() < requiredMinimum) {
+        return canActivate(meter, 1.0f);
+    }
+
+    /**
+     * Checks if the meter has enough value to activate, with a per-player cost
+     * multiplier applied to the required minimum (DRAIN costs only).
+     */
+    public boolean canActivate(MeterInstance meter, float multiplier) {
+        float required = scaledRequiredMinimum(multiplier);
+        if (required > 0 && meter.getValue() < required) {
             return false;
         }
         return true;
@@ -89,8 +116,16 @@ public class MeterCost {
      * Applies this cost to the meter. Call after activation succeeds.
      */
     public void apply(MeterInstance meter) {
+        apply(meter, 1.0f);
+    }
+
+    /**
+     * Applies this cost to the meter with a per-player cost multiplier
+     * (DRAIN costs only — other operations apply their raw amount).
+     */
+    public void apply(MeterInstance meter, float multiplier) {
         switch (operation) {
-            case DRAIN -> meter.drain(amount);
+            case DRAIN -> meter.drain(scaledAmount(multiplier));
             case ADD -> meter.add(amount);
             case MULTIPLY -> meter.multiply(amount);
             case DIVIDE -> {

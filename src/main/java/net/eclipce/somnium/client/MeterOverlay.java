@@ -21,23 +21,26 @@ import java.util.Map;
  * Renders meter bars on the HUD.
  *
  * <h3>Layout model</h3>
- * <p>The meter stack (stamina, then any auto-positioned custom meters) renders
- * <strong>flush against the true screen edge</strong> — the same
- * {@link AbilityBarOverlay#SCREEN_OFFSET_X}/{@code Y} margin the ability bar
- * itself uses. The ability bar is then pushed inward (toward screen centre) by
- * exactly the width the meter stack consumes, via
- * {@link #getReservedStackWidth}, which {@code AbilityBarOverlay.calculateBarX}
- * calls every frame. Because the ability bar's keybind labels are always
- * positioned relative to the bar's own X, this single adjustment is what makes
- * the labels move out of the way automatically whenever a meter is present —
- * there is no separate "keybind avoidance" calculation to keep in sync.</p>
+ * <p><strong>The ability bar and the stamina meter never move</strong> — both
+ * sit at exactly the positions they always have (ability bar flush at its
+ * configured screen corner; stamina offset from it via {@link #STANDARD_X}/
+ * {@link #PAGED_X}). Nothing in this class shifts either of them.</p>
  *
  * <p>Custom meters with no fixed {@link MeterDefinition#getScreenPosition()}
- * stack inward from stamina in the same direction the ability bar was pushed.
- * Each meter's footprint for stacking purposes is its texture width scaled by
- * {@link MeterDefinition#getScale()}, so differently-sized custom meters stack
- * without overlapping. Meters with a fixed screen position render independently
- * and don't contribute to the stack width or the ability bar's shift.</p>
+ * split into two groups:</p>
+ * <ul>
+ *   <li><b>Custom-textured</b> (a {@link MeterDefinition#getFrameTexture()} or
+ *       {@link MeterDefinition#getFillTexture()} is set) — stack outward from
+ *       stamina, same side as stamina, exactly like the original behaviour.</li>
+ *   <li><b>Default-look</b> (no custom frame/fill texture) — render
+ *       <strong>mirrored onto the ability bar's other side</strong>, the same
+ *       side the keybind labels occupy, stacking further inward for each
+ *       additional one. Because this puts them where the labels would
+ *       otherwise draw, {@link #getKeybindLabelExtraOffset} tells
+ *       {@code AbilityBarOverlay} exactly how much further out to push the
+ *       labels to clear them — the ability bar's own position is untouched;
+ *       only the label offset grows.</li>
+ * </ul>
  *
  * <p>The fill texture is tinted by the meter's color. The frame texture
  * renders first, fill overlays on top. Fill direction is bottom-to-top.</p>
@@ -63,21 +66,30 @@ public class MeterOverlay implements IGuiOverlay {
     /** Visible height matching the ability bar for Y alignment. */
     private static final int ABILITY_BAR_VISIBLE_HEIGHT = 120;
 
-    /** Gap between meters when stacked, and between the stack and the ability bar. */
+    /** Width of the ability bar texture. */
+    private static final int ABILITY_BAR_WIDTH = 26;
+
+    /** Gap between meters when stacked, and between a stack and the ability bar. */
     private static final int METER_GAP = 2;
 
     // ═══════════════════════════════════════════════════════════════════
-    //  Meter vertical fine-tuning
-    //  X positioning is now edge-flush (see getReservedStackWidth /
-    //  render()) and no longer needs a paged-vs-standard distinction — only
-    //  Y needs a small nudge, since the paged ability bar texture has a
-    //  taller visible area (page-arrow graphic) that shifts its icon rows.
+    //  Stamina position — original, untouched values.
+    //  Stamina always renders at abilityBarX + (STANDARD_X or PAGED_X),
+    //  exactly as before. Nothing in this class moves the ability bar or
+    //  stamina; only default-look custom meters (mirrored to the bar's other
+    //  side) and the keybind label offset are new.
     // ═══════════════════════════════════════════════════════════════════
 
-    /** Y nudge relative to the ability bar's Y when the paged bar is showing. */
+    /** X offset relative to abilityBarX when the paged bar is showing. */
+    private static final int PAGED_X = 21;
+
+    /** Y offset relative to barY when the paged bar is showing. */
     private static final int PAGED_Y = -5;
 
-    /** Y nudge relative to the ability bar's Y when the standard bar is showing. */
+    /** X offset relative to abilityBarX when the standard bar is showing. */
+    private static final int STANDARD_X = 20;
+
+    /** Y offset relative to barY when the standard bar is showing. */
     private static final int STANDARD_Y = -2;
 
     // ═══════════════════════════════════════════════════════════════════
@@ -98,33 +110,35 @@ public class MeterOverlay implements IGuiOverlay {
         int offsetX = AbilityBarOverlay.SCREEN_OFFSET_X;
         int offsetY = AbilityBarOverlay.SCREEN_OFFSET_Y;
 
-        // Ability bar Y only — used purely to vertically line the meter stack
-        // up with the ability bar's icon rows. X is no longer derived from the
-        // ability bar at all: the meter stack is flush against the true screen
-        // edge (same margin the ability bar itself uses), and it's the ability
-        // bar that shifts inward to make room (see calculateBarX in
-        // AbilityBarOverlay, which calls getReservedStackWidth below).
+        // Ability bar position — identical to AbilityBarOverlay's own
+        // (unshifted) calculation. Nothing here ever moves this.
+        int abilityBarX;
+        if (position.isRight()) {
+            abilityBarX = screenWidth - ABILITY_BAR_WIDTH - offsetX;
+        } else {
+            abilityBarX = offsetX;
+        }
+
         int barY = position.isTop() ? offsetY : screenHeight - ABILITY_BAR_VISIBLE_HEIGHT - offsetY;
 
         boolean paged = AbilityBarOverlay.isPaged() && !AbilityBarOverlay.isShowingAlternateBar();
-        int yNudge = paged ? PAGED_Y : STANDARD_Y;
-        int meterY = barY + yNudge;
+        int xOffset = paged ? PAGED_X : STANDARD_X;
+        int yOffset = paged ? PAGED_Y : STANDARD_Y;
 
-        // The stack's outer edge — the side facing the true screen edge.
-        // For a right-anchored bar this is the RIGHT edge of each meter;
-        // for a left-anchored bar this is the LEFT edge. `cumulative` tracks
-        // how much width (previous meters + their gaps) has already been
-        // consumed moving inward from that edge.
-        int outerEdge = position.isRight() ? screenWidth - offsetX : offsetX;
-        int cumulative = 0;
+        // Stamina — original position, untouched.
+        int staminaX = abilityBarX + xOffset;
+        int staminaY = barY + yOffset;
+        renderStamina(graphics, staminaX, staminaY, data.getStaminaData());
 
-        // ── Stamina — always first in the stack ──
-        int staminaX = position.isRight() ? outerEdge - cumulative - TEX_WIDTH : outerEdge + cumulative;
-        renderStamina(graphics, staminaX, meterY, data.getStaminaData());
-        cumulative += TEX_WIDTH + METER_GAP;
+        // Mirror base: reflects stamina's (abilityBarX + xOffset) placement
+        // across the ability bar's own width, so a same-width meter on the
+        // opposite flank sits the same visual distance from the bar, on the
+        // other side — the same side the keybind labels are on.
+        int mirrorBase = abilityBarX + (ABILITY_BAR_WIDTH - xOffset);
 
-        // ── Custom meters — stack inward from stamina, or render at a
-        //    definition's fixed screenPosition if it has one ──
+        int outerIndex = 1;      // stacks outward from stamina (custom-textured meters)
+        int innerCumulative = 0; // stacks inward from mirrorBase (default-look meters)
+
         for (MeterDefinition def : MeterDefinition.getAll()) {
             MeterInstance meter = data.getMeterIfPresent(def.getId());
             if (meter == null) continue;               // player never touched this meter
@@ -132,8 +146,8 @@ public class MeterOverlay implements IGuiOverlay {
 
             int[] fixed = def.getScreenPosition();
             if (fixed != null && fixed.length == 2) {
-                // Fixed-position meters render independently — they don't
-                // participate in the stack and don't reserve any space.
+                // Fixed-position meters render independently — no stacking,
+                // no effect on stamina, the ability bar, or the labels.
                 renderCustomMeter(graphics, fixed[0] + def.getOffsetX(),
                         fixed[1] + def.getOffsetY(), def, meter);
                 continue;
@@ -142,40 +156,69 @@ public class MeterOverlay implements IGuiOverlay {
             int texW = def.getTextureWidth() != null ? def.getTextureWidth() : TEX_WIDTH;
             int renderW = Math.round(texW * def.getScale());
 
-            int meterX = position.isRight() ? outerEdge - cumulative - renderW : outerEdge + cumulative;
+            int meterX;
+            int meterY;
+            if (isDefaultLook(def)) {
+                // Mirrored onto the ability bar's other side — the labels'
+                // side — stacking further inward for each additional one.
+                meterX = mirrorBase - renderW - innerCumulative;
+                meterY = staminaY;
+                innerCumulative += renderW + METER_GAP;
+            } else {
+                // Custom-textured meters keep the original behaviour: stacked
+                // outward from stamina, same side as stamina.
+                int step = (TEX_WIDTH + METER_GAP) * outerIndex;
+                meterX = position.isRight() ? staminaX - step : staminaX + step;
+                meterY = staminaY;
+                outerIndex++;
+            }
+
             renderCustomMeter(graphics, meterX + def.getOffsetX(),
                     meterY + def.getOffsetY(), def, meter);
-            cumulative += renderW + METER_GAP;
         }
     }
 
+    /** A meter is "default-look" when it uses neither a custom frame nor fill texture. */
+    private static boolean isDefaultLook(MeterDefinition def) {
+        return def.getFrameTexture() == null && def.getFillTexture() == null;
+    }
+
     /**
-     * Total horizontal space (in GUI-scaled pixels) consumed by the auto-
-     * stacked meter sequence — stamina plus any custom meters using automatic
-     * layout — including the trailing gap before whatever renders next (the
-     * ability bar). Meters with a fixed {@link MeterDefinition#getScreenPosition()}
-     * render independently and are excluded, matching how {@link #render}
-     * treats them.
+     * How many extra pixels {@code AbilityBarOverlay} should push its keybind
+     * labels beyond its normal {@code KEYBIND_LABEL_GAP}, to clear the
+     * default-look custom meters mirrored onto the label's side of the
+     * ability bar (see this class's javadoc). Returns 0 if there are none —
+     * custom-textured meters and fixed-position meters never affect this,
+     * since they don't render on the label's side.
      *
-     * <p>Called once per frame by {@code AbilityBarOverlay.calculateBarX} so
-     * the ability bar — and by extension its keybind labels, which are always
-     * positioned relative to the bar's own X — shifts inward exactly enough
-     * to avoid the flush-edge meter stack.</p>
+     * @param abilityBarX the ability bar's own (unshifted) X, exactly as
+     *                    {@code AbilityBarOverlay.calculateBarX} computes it
+     * @param paged       whether the paged bar variant is currently showing
      */
-    public static int getReservedStackWidth(@Nullable SomniumPlayerData data) {
+    public static int getKeybindLabelExtraOffset(@Nullable SomniumPlayerData data,
+                                                 int abilityBarX, boolean paged) {
         if (data == null) return 0;
 
-        int total = TEX_WIDTH + METER_GAP; // stamina always renders whenever data exists
+        int xOffset = paged ? PAGED_X : STANDARD_X;
+        int mirrorBase = abilityBarX + (ABILITY_BAR_WIDTH - xOffset);
+
+        int cumulative = 0;
+        boolean any = false;
         for (MeterDefinition def : MeterDefinition.getAll()) {
             if (def.getScreenPosition() != null) continue;
+            if (!isDefaultLook(def)) continue;
             MeterInstance meter = data.getMeterIfPresent(def.getId());
             if (meter == null) continue;
             if (!isVisible(def, data)) continue;
 
             int texW = def.getTextureWidth() != null ? def.getTextureWidth() : TEX_WIDTH;
-            total += Math.round(texW * def.getScale()) + METER_GAP;
+            cumulative += Math.round(texW * def.getScale()) + METER_GAP;
+            any = true;
         }
-        return total;
+        if (!any) return 0;
+
+        int leftmostEdge = mirrorBase - cumulative;
+        return Math.max(0, abilityBarX - leftmostEdge);
     }
 
     /**

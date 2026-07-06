@@ -245,27 +245,31 @@ public class AbilityBarOverlay implements IGuiOverlay {
         int offsetX = SCREEN_OFFSET_X;
         int offsetY = SCREEN_OFFSET_Y;
 
-        // The meter stack (stamina + auto-positioned custom meters) renders
-        // flush against the true screen edge — see MeterOverlay's class
-        // javadoc. Shifting the ability bar inward by exactly that width is
-        // what keeps it (and, since keybind labels are positioned relative to
-        // barX below, the labels too) from overlapping the meters.
-        int reservedWidth = MeterOverlay.getReservedStackWidth(data);
-
-        // Calculate bar position on screen
-        int barX = calculateBarX(position, screenWidth, offsetX, reservedWidth);
+        // Calculate bar position on screen — unchanged from the original,
+        // unshifted calculation. Meters never move the ability bar; only the
+        // keybind label offset below grows to clear any default-look custom
+        // meters MeterOverlay mirrors onto the label's side of the bar.
+        int barX = calculateBarX(position, screenWidth, offsetX);
         int barY = calculateBarY(position, screenHeight, visibleHeight, offsetY);
+
+        // Must match MeterOverlay's own internal "paged" check exactly (it
+        // picks PAGED_X vs STANDARD_X off this same condition) so the label
+        // offset lines up with whatever mirrorBase MeterOverlay actually used
+        // this frame — the local `paged` above is a different, texture-only
+        // condition and isn't the right one to reuse here.
+        boolean meterPaged = isPaged() && !isShowingAlternateBar();
+        int labelExtraOffset = MeterOverlay.getKeybindLabelExtraOffset(data, barX, meterPaged);
 
         Font font = mc.font;
 
         if (position.isTop()) {
             // Render flipped for top positions
             renderFlipped(graphics, font, data, texture, barX, barY,
-                    visibleHeight, position, screenWidth, screenHeight);
+                    visibleHeight, position, screenWidth, screenHeight, labelExtraOffset);
         } else {
             // Render normal for bottom positions
             renderNormal(graphics, font, data, texture, barX, barY,
-                    visibleHeight, position);
+                    visibleHeight, position, labelExtraOffset);
         }
     }
 
@@ -275,7 +279,7 @@ public class AbilityBarOverlay implements IGuiOverlay {
 
     private void renderNormal(GuiGraphics graphics, Font font, SomniumPlayerData data,
                               ResourceLocation texture, int barX, int barY,
-                              int visibleHeight, BarPosition position) {
+                              int visibleHeight, BarPosition position, int labelExtraOffset) {
         // Render bar background texture
         graphics.blit(texture, barX, barY, 0, 0, TEX_WIDTH, TEX_HEIGHT, TEX_WIDTH, TEX_HEIGHT);
 
@@ -285,7 +289,7 @@ public class AbilityBarOverlay implements IGuiOverlay {
             int iconY = barY + SLOT_ICON_Y[slot];
 
             renderSlotContents(graphics, data, slot, iconX, iconY);
-            renderKeybindLabel(graphics, font, slot, barX, iconY, position);
+            renderKeybindLabel(graphics, font, slot, barX, iconY, position, labelExtraOffset);
         }
     }
 
@@ -296,7 +300,7 @@ public class AbilityBarOverlay implements IGuiOverlay {
     private void renderFlipped(GuiGraphics graphics, Font font, SomniumPlayerData data,
                                ResourceLocation texture, int barX, int barY,
                                int visibleHeight, BarPosition position,
-                               int screenWidth, int screenHeight) {
+                               int screenWidth, int screenHeight, int labelExtraOffset) {
         var poseStack = graphics.pose();
 
         // Flip the bar texture and icons vertically
@@ -325,7 +329,7 @@ public class AbilityBarOverlay implements IGuiOverlay {
             // Calculate where the slot appears after the flip
             int originalIconY = barY + SLOT_ICON_Y[slot];
             int flippedIconY = (int) (2 * centerY - originalIconY - ICON_SIZE);
-            renderKeybindLabel(graphics, font, slot, barX, flippedIconY, position);
+            renderKeybindLabel(graphics, font, slot, barX, flippedIconY, position, labelExtraOffset);
         }
     }
 
@@ -401,9 +405,17 @@ public class AbilityBarOverlay implements IGuiOverlay {
     /**
      * Renders the keybind label for a slot. Uses custom textures for mouse
      * buttons and abbreviated text for keyboard keys.
+     *
+     * @param labelExtraOffset extra pixels to push the label further from the
+     *                         ability bar, beyond the normal
+     *                         {@link #KEYBIND_LABEL_GAP} — non-zero only when
+     *                         a default-look custom meter is mirrored onto
+     *                         this side of the bar. See
+     *                         {@link MeterOverlay#getKeybindLabelExtraOffset}.
      */
     private void renderKeybindLabel(GuiGraphics graphics, Font font, int slot,
-                                    int barX, int iconY, BarPosition position) {
+                                    int barX, int iconY, BarPosition position,
+                                    int labelExtraOffset) {
 
         if (SomniumKeybinds.isSlotMouseBound(slot)) {
             // Mouse button — render texture
@@ -411,9 +423,9 @@ public class AbilityBarOverlay implements IGuiOverlay {
             if (mouseBtn >= 0 && mouseBtn < MOUSE_TEXTURES.length) {
                 int texX;
                 if (position.isRight()) {
-                    texX = barX - MOUSE_TEX_SIZE - KEYBIND_LABEL_GAP;
+                    texX = barX - MOUSE_TEX_SIZE - KEYBIND_LABEL_GAP - labelExtraOffset;
                 } else {
-                    texX = barX + TEX_WIDTH + KEYBIND_LABEL_GAP;
+                    texX = barX + TEX_WIDTH + KEYBIND_LABEL_GAP + labelExtraOffset;
                 }
                 int texY = iconY + (ICON_SIZE - MOUSE_TEX_SIZE) / 2;
 
@@ -430,9 +442,9 @@ public class AbilityBarOverlay implements IGuiOverlay {
 
             int textX;
             if (position.isRight()) {
-                textX = barX - textWidth - KEYBIND_LABEL_GAP;
+                textX = barX - textWidth - KEYBIND_LABEL_GAP - labelExtraOffset;
             } else {
-                textX = barX + TEX_WIDTH + KEYBIND_LABEL_GAP;
+                textX = barX + TEX_WIDTH + KEYBIND_LABEL_GAP + labelExtraOffset;
             }
 
             int textY = iconY + (ICON_SIZE - font.lineHeight) / 2;
@@ -446,16 +458,12 @@ public class AbilityBarOverlay implements IGuiOverlay {
 
     /**
      * Calculates the X position of the bar on screen.
-     *
-     * @param reservedWidth extra inward shift to make room for the meter
-     *                      stack, which itself renders flush against the true
-     *                      screen edge. See {@link MeterOverlay#getReservedStackWidth}.
      */
-    private int calculateBarX(BarPosition position, int screenWidth, int offsetX, int reservedWidth) {
+    private int calculateBarX(BarPosition position, int screenWidth, int offsetX) {
         if (position.isRight()) {
-            return screenWidth - TEX_WIDTH - offsetX - reservedWidth;
+            return screenWidth - TEX_WIDTH - offsetX;
         } else {
-            return offsetX + reservedWidth;
+            return offsetX;
         }
     }
 

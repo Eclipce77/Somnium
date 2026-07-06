@@ -245,8 +245,15 @@ public class AbilityBarOverlay implements IGuiOverlay {
         int offsetX = SCREEN_OFFSET_X;
         int offsetY = SCREEN_OFFSET_Y;
 
+        // The meter stack (stamina + auto-positioned custom meters) renders
+        // flush against the true screen edge — see MeterOverlay's class
+        // javadoc. Shifting the ability bar inward by exactly that width is
+        // what keeps it (and, since keybind labels are positioned relative to
+        // barX below, the labels too) from overlapping the meters.
+        int reservedWidth = MeterOverlay.getReservedStackWidth(data);
+
         // Calculate bar position on screen
-        int barX = calculateBarX(position, screenWidth, offsetX);
+        int barX = calculateBarX(position, screenWidth, offsetX, reservedWidth);
         int barY = calculateBarY(position, screenHeight, visibleHeight, offsetY);
 
         Font font = mc.font;
@@ -439,12 +446,16 @@ public class AbilityBarOverlay implements IGuiOverlay {
 
     /**
      * Calculates the X position of the bar on screen.
+     *
+     * @param reservedWidth extra inward shift to make room for the meter
+     *                      stack, which itself renders flush against the true
+     *                      screen edge. See {@link MeterOverlay#getReservedStackWidth}.
      */
-    private int calculateBarX(BarPosition position, int screenWidth, int offsetX) {
+    private int calculateBarX(BarPosition position, int screenWidth, int offsetX, int reservedWidth) {
         if (position.isRight()) {
-            return screenWidth - TEX_WIDTH - offsetX;
+            return screenWidth - TEX_WIDTH - offsetX - reservedWidth;
         } else {
-            return offsetX;
+            return offsetX + reservedWidth;
         }
     }
 

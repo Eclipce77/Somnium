@@ -18,9 +18,26 @@ import javax.annotation.Nullable;
 import java.util.Map;
 
 /**
- * Renders meter bars on the HUD. Stamina renders flush right of the ability
- * bar. Custom meters render in sequence after stamina (or at fixed positions
- * if specified by the definition).
+ * Renders meter bars on the HUD.
+ *
+ * <h3>Layout model</h3>
+ * <p>The meter stack (stamina, then any auto-positioned custom meters) renders
+ * <strong>flush against the true screen edge</strong> — the same
+ * {@link AbilityBarOverlay#SCREEN_OFFSET_X}/{@code Y} margin the ability bar
+ * itself uses. The ability bar is then pushed inward (toward screen centre) by
+ * exactly the width the meter stack consumes, via
+ * {@link #getReservedStackWidth}, which {@code AbilityBarOverlay.calculateBarX}
+ * calls every frame. Because the ability bar's keybind labels are always
+ * positioned relative to the bar's own X, this single adjustment is what makes
+ * the labels move out of the way automatically whenever a meter is present —
+ * there is no separate "keybind avoidance" calculation to keep in sync.</p>
+ *
+ * <p>Custom meters with no fixed {@link MeterDefinition#getScreenPosition()}
+ * stack inward from stamina in the same direction the ability bar was pushed.
+ * Each meter's footprint for stacking purposes is its texture width scaled by
+ * {@link MeterDefinition#getScale()}, so differently-sized custom meters stack
+ * without overlapping. Meters with a fixed screen position render independently
+ * and don't contribute to the stack width or the ability bar's shift.</p>
  *
  * <p>The fill texture is tinted by the meter's color. The frame texture
  * renders first, fill overlays on top. Fill direction is bottom-to-top.</p>
@@ -46,32 +63,21 @@ public class MeterOverlay implements IGuiOverlay {
     /** Visible height matching the ability bar for Y alignment. */
     private static final int ABILITY_BAR_VISIBLE_HEIGHT = 120;
 
-    /** Width of the ability bar texture. */
-    private static final int ABILITY_BAR_WIDTH = 26;
-
-    /** Gap between meters when stacked. */
+    /** Gap between meters when stacked, and between the stack and the ability bar. */
     private static final int METER_GAP = 2;
 
     // ═══════════════════════════════════════════════════════════════════
-    //  Meter position — paged bar variant
-    //  Adjust these to reposition the meter when the paged bar is showing
+    //  Meter vertical fine-tuning
+    //  X positioning is now edge-flush (see getReservedStackWidth /
+    //  render()) and no longer needs a paged-vs-standard distinction — only
+    //  Y needs a small nudge, since the paged ability bar texture has a
+    //  taller visible area (page-arrow graphic) that shifts its icon rows.
     // ═══════════════════════════════════════════════════════════════════
 
-    /** X offset relative to abilityBarX when paged bar is showing. */
-    private static final int PAGED_X = 21;
-
-    /** Y offset relative to barY when paged bar is showing. */
+    /** Y nudge relative to the ability bar's Y when the paged bar is showing. */
     private static final int PAGED_Y = -5;
 
-    // ═══════════════════════════════════════════════════════════════════
-    //  Meter position — standard (non-paged) bar variant
-    //  Adjust these to reposition the meter when the standard bar is showing
-    // ═══════════════════════════════════════════════════════════════════
-
-    /** X offset relative to abilityBarX when standard bar is showing. */
-    private static final int STANDARD_X = 20;
-
-    /** Y offset relative to barY when standard bar is showing. */
+    /** Y nudge relative to the ability bar's Y when the standard bar is showing. */
     private static final int STANDARD_Y = -2;
 
     // ═══════════════════════════════════════════════════════════════════
@@ -92,61 +98,84 @@ public class MeterOverlay implements IGuiOverlay {
         int offsetX = AbilityBarOverlay.SCREEN_OFFSET_X;
         int offsetY = AbilityBarOverlay.SCREEN_OFFSET_Y;
 
-        // Calculate ability bar position (same logic as AbilityBarOverlay)
-        int abilityBarX;
-        if (position.isRight()) {
-            abilityBarX = screenWidth - ABILITY_BAR_WIDTH - offsetX;
-        } else {
-            abilityBarX = offsetX;
-        }
+        // Ability bar Y only — used purely to vertically line the meter stack
+        // up with the ability bar's icon rows. X is no longer derived from the
+        // ability bar at all: the meter stack is flush against the true screen
+        // edge (same margin the ability bar itself uses), and it's the ability
+        // bar that shifts inward to make room (see calculateBarX in
+        // AbilityBarOverlay, which calls getReservedStackWidth below).
+        int barY = position.isTop() ? offsetY : screenHeight - ABILITY_BAR_VISIBLE_HEIGHT - offsetY;
 
-        int barY;
-        if (position.isTop()) {
-            barY = offsetY;
-        } else {
-            barY = screenHeight - ABILITY_BAR_VISIBLE_HEIGHT - offsetY;
-        }
+        boolean paged = AbilityBarOverlay.isPaged() && !AbilityBarOverlay.isShowingAlternateBar();
+        int yNudge = paged ? PAGED_Y : STANDARD_Y;
+        int meterY = barY + yNudge;
 
-        // Choose position set based on paged vs standard bar
-        boolean paged = AbilityBarOverlay.isPaged()
-                && !AbilityBarOverlay.isShowingAlternateBar();
+        // The stack's outer edge — the side facing the true screen edge.
+        // For a right-anchored bar this is the RIGHT edge of each meter;
+        // for a left-anchored bar this is the LEFT edge. `cumulative` tracks
+        // how much width (previous meters + their gaps) has already been
+        // consumed moving inward from that edge.
+        int outerEdge = position.isRight() ? screenWidth - offsetX : offsetX;
+        int cumulative = 0;
 
-        int staminaX, staminaY;
-        if (paged) {
-            staminaX = abilityBarX + PAGED_X;
-            staminaY = barY + PAGED_Y;
-        } else {
-            staminaX = abilityBarX + STANDARD_X;
-            staminaY = barY + STANDARD_Y;
-        }
+        // ── Stamina — always first in the stack ──
+        int staminaX = position.isRight() ? outerEdge - cumulative - TEX_WIDTH : outerEdge + cumulative;
+        renderStamina(graphics, staminaX, meterY, data.getStaminaData());
+        cumulative += TEX_WIDTH + METER_GAP;
 
-        // Render stamina
-        net.eclipce.somnium.core.meter.StaminaData stamina = data.getStaminaData();
-        renderStamina(graphics, staminaX, staminaY, stamina);
-
-        // Render custom meters — stacked sideways from stamina (toward screen
-        // centre), or at a definition's fixed screenPosition if it has one.
-        int index = 1;
+        // ── Custom meters — stack inward from stamina, or render at a
+        //    definition's fixed screenPosition if it has one ──
         for (MeterDefinition def : MeterDefinition.getAll()) {
             MeterInstance meter = data.getMeterIfPresent(def.getId());
             if (meter == null) continue;               // player never touched this meter
             if (!isVisible(def, data)) continue;
 
-            int meterX;
-            int meterY;
             int[] fixed = def.getScreenPosition();
             if (fixed != null && fixed.length == 2) {
-                meterX = fixed[0];
-                meterY = fixed[1];
-            } else {
-                int step = (TEX_WIDTH + METER_GAP) * index;
-                meterX = position.isRight() ? staminaX - step : staminaX + step;
-                meterY = staminaY;
-                index++;
+                // Fixed-position meters render independently — they don't
+                // participate in the stack and don't reserve any space.
+                renderCustomMeter(graphics, fixed[0] + def.getOffsetX(),
+                        fixed[1] + def.getOffsetY(), def, meter);
+                continue;
             }
 
-            renderCustomMeter(graphics, meterX, meterY, def, meter);
+            int texW = def.getTextureWidth() != null ? def.getTextureWidth() : TEX_WIDTH;
+            int renderW = Math.round(texW * def.getScale());
+
+            int meterX = position.isRight() ? outerEdge - cumulative - renderW : outerEdge + cumulative;
+            renderCustomMeter(graphics, meterX + def.getOffsetX(),
+                    meterY + def.getOffsetY(), def, meter);
+            cumulative += renderW + METER_GAP;
         }
+    }
+
+    /**
+     * Total horizontal space (in GUI-scaled pixels) consumed by the auto-
+     * stacked meter sequence — stamina plus any custom meters using automatic
+     * layout — including the trailing gap before whatever renders next (the
+     * ability bar). Meters with a fixed {@link MeterDefinition#getScreenPosition()}
+     * render independently and are excluded, matching how {@link #render}
+     * treats them.
+     *
+     * <p>Called once per frame by {@code AbilityBarOverlay.calculateBarX} so
+     * the ability bar — and by extension its keybind labels, which are always
+     * positioned relative to the bar's own X — shifts inward exactly enough
+     * to avoid the flush-edge meter stack.</p>
+     */
+    public static int getReservedStackWidth(@Nullable SomniumPlayerData data) {
+        if (data == null) return 0;
+
+        int total = TEX_WIDTH + METER_GAP; // stamina always renders whenever data exists
+        for (MeterDefinition def : MeterDefinition.getAll()) {
+            if (def.getScreenPosition() != null) continue;
+            MeterInstance meter = data.getMeterIfPresent(def.getId());
+            if (meter == null) continue;
+            if (!isVisible(def, data)) continue;
+
+            int texW = def.getTextureWidth() != null ? def.getTextureWidth() : TEX_WIDTH;
+            total += Math.round(texW * def.getScale()) + METER_GAP;
+        }
+        return total;
     }
 
     /**
@@ -167,22 +196,52 @@ public class MeterOverlay implements IGuiOverlay {
     /**
      * Renders one custom meter: frame, then bottom-to-top fill tinted by the
      * definition's color. Uses the definition's frame/fill textures when set,
-     * falling back to the defaults.
+     * falling back to the defaults, and honours per-definition texture size
+     * ({@link MeterDefinition#getTextureWidth()}/{@code getTextureHeight()})
+     * and scale ({@link MeterDefinition#getScale()}).
+     *
+     * <h3>Why scale doesn't need to read the GUI Scale option</h3>
+     * <p>{@code IGuiOverlay.render} is already called with a PoseStack that
+     * has Minecraft's GUI-scale matrix applied — {@code screenWidth}/
+     * {@code screenHeight} and every {@code GuiGraphics} call here operate in
+     * that same logical-pixel space, the same way the vanilla hotbar or XP
+     * bar do. Wrapping the blit calls in an additional
+     * {@code poseStack.scale(...)} for {@link MeterDefinition#getScale()}
+     * therefore composes correctly with whatever GUI Scale the player has
+     * chosen automatically; reading
+     * {@code Minecraft.getInstance().getWindow().getGuiScale()} here and
+     * multiplying manually would double-apply it.</p>
      */
     private void renderCustomMeter(GuiGraphics graphics, int x, int y,
                                    MeterDefinition def, MeterInstance meter) {
         ResourceLocation frame = def.getFrameTexture() != null ? def.getFrameTexture() : DEFAULT_FRAME;
         ResourceLocation fill = def.getFillTexture() != null ? def.getFillTexture() : DEFAULT_FILL;
 
+        int texW = def.getTextureWidth() != null ? def.getTextureWidth() : TEX_WIDTH;
+        int texH = def.getTextureHeight() != null ? def.getTextureHeight() : TEX_HEIGHT;
+        float scale = def.getScale();
+        boolean scaled = scale != 1.0f;
+
+        var poseStack = graphics.pose();
+        if (scaled) {
+            // Scale around this meter's own top-left anchor so offsetX/offsetY
+            // (already baked into x, y by the caller) stay the visual anchor
+            // point regardless of scale.
+            poseStack.pushPose();
+            poseStack.translate(x, y, 0);
+            poseStack.scale(scale, scale, 1f);
+            poseStack.translate(-x, -y, 0);
+        }
+
         // Layer 1: Frame
         RenderSystem.enableBlend();
         graphics.blit(frame, x, y,
-                0, 0, TEX_WIDTH, TEX_HEIGHT,
-                TEX_WIDTH, TEX_HEIGHT);
+                0, 0, texW, texH,
+                texW, texH);
 
         // Layer 2: Fill (tinted, bottom-to-top)
         float fraction = Math.max(0f, Math.min(1f, meter.getFraction()));
-        int fillPixels = Math.round(TEX_HEIGHT * fraction);
+        int fillPixels = Math.round(texH * fraction);
         if (fillPixels > 0) {
             int color = def.getColor();
             float r = ((color >> 16) & 0xFF) / 255f;
@@ -190,16 +249,18 @@ public class MeterOverlay implements IGuiOverlay {
             float b = (color & 0xFF) / 255f;
             graphics.setColor(r, g, b, 1f);
 
-            int fillStartY = y + TEX_HEIGHT - fillPixels;
-            int texV = TEX_HEIGHT - fillPixels;
+            int fillStartY = y + texH - fillPixels;
+            int texV = texH - fillPixels;
             graphics.blit(fill, x, fillStartY,
                     0, texV,
-                    TEX_WIDTH, fillPixels,
-                    TEX_WIDTH, TEX_HEIGHT);
+                    texW, fillPixels,
+                    texW, texH);
 
             graphics.setColor(1f, 1f, 1f, 1f);
         }
         RenderSystem.disableBlend();
+
+        if (scaled) poseStack.popPose();
     }
 
     /** Ticks per minute — used to calculate overuse timer fraction. */

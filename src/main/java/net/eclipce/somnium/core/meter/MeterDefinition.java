@@ -100,6 +100,34 @@ public class MeterDefinition {
     private final int[] screenPosition; // {x, y} or null for auto
     @Nullable
     private final Consumer<net.minecraft.server.level.ServerPlayer> onDepleted;
+    /**
+     * Custom texture pixel dimensions, or {@code null} to use the renderer's
+     * built-in default (26x129, matching Somnium's stock bar textures). Only
+     * meaningful if {@link #frameTexture} and/or {@link #fillTexture} point at
+     * art that isn't the stock size — a custom fill/frame pair authored at,
+     * say, 32x160 must set this or it will be sampled as if it were 26x129.
+     */
+    @Nullable
+    private final Integer textureWidth;
+    @Nullable
+    private final Integer textureHeight;
+    /**
+     * Pixel nudge applied to this meter's rendered position, on top of
+     * whichever positioning mode is active (auto-stacked next to the ability
+     * bar, or a fixed {@link #screenPosition}). Positive X moves right,
+     * positive Y moves down. Defaults to (0, 0) — no nudge.
+     */
+    private final int offsetX;
+    private final int offsetY;
+    /**
+     * Uniform scale factor applied to this meter's rendered size, anchored at
+     * its own top-left corner. Defaults to {@code 1.0f} (100%, no scaling).
+     * Applied via a PoseStack transform at render time, so it composes
+     * correctly with the player's GUI Scale option automatically — Somnium
+     * never reads the raw GUI scale itself for this, since {@code IGuiOverlay}
+     * already renders inside that matrix.
+     */
+    private final float scale;
 
     private MeterDefinition(Builder builder) {
         this.id = builder.id;
@@ -115,6 +143,11 @@ public class MeterDefinition {
         this.fillTexture = builder.fillTexture;
         this.screenPosition = builder.screenPosition;
         this.onDepleted = builder.onDepleted;
+        this.textureWidth = builder.textureWidth;
+        this.textureHeight = builder.textureHeight;
+        this.offsetX = builder.offsetX;
+        this.offsetY = builder.offsetY;
+        this.scale = builder.scale;
     }
 
     // ═══════════════════════════════════════════════════════════════════
@@ -134,6 +167,11 @@ public class MeterDefinition {
     @Nullable public ResourceLocation getFillTexture() { return fillTexture; }
     @Nullable public int[] getScreenPosition() { return screenPosition; }
     @Nullable public Consumer<net.minecraft.server.level.ServerPlayer> getOnDepleted() { return onDepleted; }
+    @Nullable public Integer getTextureWidth() { return textureWidth; }
+    @Nullable public Integer getTextureHeight() { return textureHeight; }
+    public int getOffsetX() { return offsetX; }
+    public int getOffsetY() { return offsetY; }
+    public float getScale() { return scale; }
 
     // ═══════════════════════════════════════════════════════════════════
     //  Builder
@@ -157,6 +195,11 @@ public class MeterDefinition {
         private ResourceLocation fillTexture = null;
         private int[] screenPosition = null;
         private Consumer<net.minecraft.server.level.ServerPlayer> onDepleted = null;
+        private Integer textureWidth = null;
+        private Integer textureHeight = null;
+        private int offsetX = 0;
+        private int offsetY = 0;
+        private float scale = 1.0f;
 
         private Builder(ResourceLocation id) {
             this.id = id;
@@ -218,6 +261,40 @@ public class MeterDefinition {
 
         /** Fixed screen position {x, y}. Null = auto-layout next to bar. */
         public Builder screenPosition(int x, int y) { this.screenPosition = new int[]{x, y}; return this; }
+
+        /**
+         * Sets custom pixel dimensions for this meter's textures, for use
+         * with {@link #frameTexture} / {@link #fillTexture} art that isn't
+         * the stock 26x129 size. Leave unset to use the renderer's default.
+         */
+        public Builder textureSize(int width, int height) {
+            this.textureWidth = width;
+            this.textureHeight = height;
+            return this;
+        }
+
+        /**
+         * Nudges this meter's rendered position by {@code (x, y)} pixels,
+         * applied on top of whichever positioning mode is active — the
+         * automatic stacked layout next to the ability bar, or a fixed
+         * {@link #screenPosition}. Default (0, 0).
+         */
+        public Builder textureOffset(int x, int y) {
+            this.offsetX = x;
+            this.offsetY = y;
+            return this;
+        }
+
+        /**
+         * Sets a uniform scale factor for this meter's rendered size (e.g.
+         * {@code 1.5f} for 150%), anchored at its own top-left corner.
+         * Default {@code 1.0f}. Applied via a PoseStack transform at render
+         * time, so it respects the player's GUI Scale setting automatically.
+         */
+        public Builder scale(float scale) {
+            this.scale = scale;
+            return this;
+        }
 
         /**
          * Callback fired on the server when this meter hits zero.

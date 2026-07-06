@@ -79,6 +79,32 @@ public class MeterDefinition {
     }
 
     // ═══════════════════════════════════════════════════════════════════
+    //  Screen corners
+    // ═══════════════════════════════════════════════════════════════════
+
+    /**
+     * A screen corner, used by {@link Builder#lockToCorner} to pin a meter in
+     * place independent of the ability bar's configured position.
+     *
+     * <p>Deliberately a separate, common-package enum rather than reusing
+     * {@code net.eclipce.somnium.client.config.BarPosition} — that class
+     * lives in the {@code client} package and is client-only, while
+     * {@code MeterDefinition} is common code loaded on both sides (server-side
+     * code reads {@code maxValue}/{@code regenRate} etc. off it, e.g. via
+     * {@code HakiUpkeepHandler}). A common class referencing a client-only
+     * type in a field/method signature is a standing Forge foot-gun — even if
+     * the field is never touched server-side, it risks class-loading errors
+     * on a dedicated server. {@code MeterOverlay} (client-only) is free to
+     * translate between this and {@code BarPosition} as needed.</p>
+     */
+    public enum ScreenCorner {
+        TOP_LEFT, TOP_RIGHT, BOTTOM_LEFT, BOTTOM_RIGHT;
+
+        public boolean isRight() { return this == TOP_RIGHT || this == BOTTOM_RIGHT; }
+        public boolean isTop()   { return this == TOP_LEFT  || this == TOP_RIGHT; }
+    }
+
+    // ═══════════════════════════════════════════════════════════════════
     //  Instance fields
     // ═══════════════════════════════════════════════════════════════════
 
@@ -100,6 +126,26 @@ public class MeterDefinition {
     private final int[] screenPosition; // {x, y} or null for auto
     @Nullable
     private final Consumer<net.minecraft.server.level.ServerPlayer> onDepleted;
+    /**
+     * When {@code true}, this meter renders flush at the screen corner
+     * directly opposite the ability bar's currently-configured
+     * {@code BarPosition} — same vertical half (top/bottom), opposite
+     * horizontal side — using the same edge margin the ability bar itself
+     * uses. Because it's derived from the live config rather than fixed at
+     * registration, it tracks the player's ability bar placement: if they
+     * move the bar, this meter moves to the new opposite side automatically.
+     * Mutually exclusive with {@link #screenPosition} and {@link #lockedCorner}.
+     */
+    private final boolean mirrorOppositeSide;
+    /**
+     * When set, pins this meter flush at a specific screen corner,
+     * independent of the ability bar's configured position — unlike
+     * {@link #mirrorOppositeSide}, it never moves even if the player changes
+     * {@code BarPosition} in config. Mutually exclusive with
+     * {@link #screenPosition} and {@link #mirrorOppositeSide}.
+     */
+    @Nullable
+    private final ScreenCorner lockedCorner;
     /**
      * Custom texture pixel dimensions, or {@code null} to use the renderer's
      * built-in default (26x129, matching Somnium's stock bar textures). Only
@@ -143,6 +189,8 @@ public class MeterDefinition {
         this.fillTexture = builder.fillTexture;
         this.screenPosition = builder.screenPosition;
         this.onDepleted = builder.onDepleted;
+        this.mirrorOppositeSide = builder.mirrorOppositeSide;
+        this.lockedCorner = builder.lockedCorner;
         this.textureWidth = builder.textureWidth;
         this.textureHeight = builder.textureHeight;
         this.offsetX = builder.offsetX;
@@ -167,6 +215,8 @@ public class MeterDefinition {
     @Nullable public ResourceLocation getFillTexture() { return fillTexture; }
     @Nullable public int[] getScreenPosition() { return screenPosition; }
     @Nullable public Consumer<net.minecraft.server.level.ServerPlayer> getOnDepleted() { return onDepleted; }
+    public boolean isMirrorOppositeSide() { return mirrorOppositeSide; }
+    @Nullable public ScreenCorner getLockedCorner() { return lockedCorner; }
     @Nullable public Integer getTextureWidth() { return textureWidth; }
     @Nullable public Integer getTextureHeight() { return textureHeight; }
     public int getOffsetX() { return offsetX; }
@@ -200,6 +250,8 @@ public class MeterDefinition {
         private int offsetX = 0;
         private int offsetY = 0;
         private float scale = 1.0f;
+        private boolean mirrorOppositeSide = false;
+        private ScreenCorner lockedCorner = null;
 
         private Builder(ResourceLocation id) {
             this.id = id;
@@ -259,8 +311,52 @@ public class MeterDefinition {
         /** Custom fill texture. Defaults to somnium meter_bar_energy.png. */
         public Builder fillTexture(ResourceLocation tex) { this.fillTexture = tex; return this; }
 
-        /** Fixed screen position {x, y}. Null = auto-layout next to bar. */
-        public Builder screenPosition(int x, int y) { this.screenPosition = new int[]{x, y}; return this; }
+        /**
+         * Fixed screen position {@code {x, y}}, in raw pixels from the
+         * top-left of the screen. Null (default) = auto-layout mirrored next
+         * to the ability bar. Mutually exclusive with
+         * {@link #mirrorOppositeScreenSide} and {@link #lockToCorner} —
+         * whichever positioning method is called last wins.
+         */
+        public Builder screenPosition(int x, int y) {
+            this.screenPosition = new int[]{x, y};
+            this.mirrorOppositeSide = false;
+            this.lockedCorner = null;
+            return this;
+        }
+
+        /**
+         * Renders this meter flush at the screen corner directly opposite the
+         * ability bar's currently-configured {@code BarPosition} — same
+         * vertical half (top/bottom), opposite horizontal side — using the
+         * same edge margin the ability bar itself uses. Unlike
+         * {@link #lockToCorner}, this tracks the live config: if the player
+         * moves their ability bar, this meter follows to the new opposite
+         * side. Mutually exclusive with {@link #screenPosition} and
+         * {@link #lockToCorner} — whichever positioning method is called last
+         * wins.
+         */
+        public Builder mirrorOppositeScreenSide() {
+            this.mirrorOppositeSide = true;
+            this.screenPosition = null;
+            this.lockedCorner = null;
+            return this;
+        }
+
+        /**
+         * Pins this meter flush at a specific screen corner, independent of
+         * the ability bar's configured position — unlike
+         * {@link #mirrorOppositeScreenSide}, it never moves even if the
+         * player changes {@code BarPosition} in config. Mutually exclusive
+         * with {@link #screenPosition} and {@link #mirrorOppositeScreenSide}
+         * — whichever positioning method is called last wins.
+         */
+        public Builder lockToCorner(ScreenCorner corner) {
+            this.lockedCorner = corner;
+            this.screenPosition = null;
+            this.mirrorOppositeSide = false;
+            return this;
+        }
 
         /**
          * Sets custom pixel dimensions for this meter's textures, for use

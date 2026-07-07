@@ -71,6 +71,26 @@ public class MeterOverlay implements IGuiOverlay {
     private static final ResourceLocation DEFAULT_FILL =
             new ResourceLocation(Somnium.MOD_ID, "textures/gui/bar/energy/meter_bar_energy.png");
 
+    /**
+     * Left-mirrored variants of the default textures — pre-flipped art (not
+     * just a mirrored position) so the bevelled/decorative edge and the flat
+     * "attaches to the ability bar" edge land on the correct sides once this
+     * texture is rendered in AUTO mode, where a default-look meter's own
+     * right edge always overlaps the ability bar (see the mirrorBase math
+     * below) regardless of whether the ability bar itself is left- or
+     * right-anchored on screen.
+     *
+     * <p><b>Asset path assumption:</b> these mirror {@link #DEFAULT_FRAME}/
+     * {@link #DEFAULT_FILL}'s own folders exactly (frame directly under
+     * {@code textures/gui/bar/}, fill under {@code textures/gui/bar/energy/}).
+     * Move these two constants' paths if the actual files end up somewhere
+     * else in the resource pack.</p>
+     */
+    private static final ResourceLocation DEFAULT_FRAME_LEFT =
+            new ResourceLocation(Somnium.MOD_ID, "textures/gui/bar/meter_bar_left.png");
+    private static final ResourceLocation DEFAULT_FILL_LEFT =
+            new ResourceLocation(Somnium.MOD_ID, "textures/gui/bar/energy/meter_bar_energy_left.png");
+
     // Stamina-specific textures
     private static final ResourceLocation STAMINA_NEGATIVE =
             new ResourceLocation(Somnium.MOD_ID, "textures/gui/bar/energy/meter_bar_stamina_negative.png");
@@ -164,9 +184,11 @@ public class MeterOverlay implements IGuiOverlay {
             int[] fixed = def.getScreenPosition();
             if (fixed != null && fixed.length == 2) {
                 // Fixed-position meters render independently — no stacking,
-                // no effect on stamina, the ability bar, or the labels.
-                renderCustomMeter(graphics, fixed[0] + def.getOffsetX(),
-                        fixed[1] + def.getOffsetY(), def, meter);
+                // no effect on stamina, the ability bar, or the labels. Not
+                // inherently "attached" to anything, so the regular (right-
+                // facing) default texture applies when no custom one is set.
+                renderCustomMeter(graphics, fixed[0] + def.getOffsetX(), fixed[1] + def.getOffsetY(),
+                        resolveFrame(def, DEFAULT_FRAME), resolveFill(def, DEFAULT_FILL), def, meter);
                 continue;
             }
 
@@ -174,11 +196,12 @@ public class MeterOverlay implements IGuiOverlay {
             if (corner != null) {
                 // Pinned to an explicit corner — independent of the ability
                 // bar's configured position, and doesn't affect it or the
-                // labels either.
+                // labels either. Not attached to the ability bar, so the
+                // regular default texture applies.
                 int[] pos = edgeFlushPosition(corner.isRight(), corner.isTop(),
                         screenWidth, screenHeight, def);
-                renderCustomMeter(graphics, pos[0] + def.getOffsetX(),
-                        pos[1] + def.getOffsetY(), def, meter);
+                renderCustomMeter(graphics, pos[0] + def.getOffsetX(), pos[1] + def.getOffsetY(),
+                        resolveFrame(def, DEFAULT_FRAME), resolveFill(def, DEFAULT_FILL), def, meter);
                 continue;
             }
 
@@ -186,11 +209,12 @@ public class MeterOverlay implements IGuiOverlay {
                 // Opposite side of the SCREEN from the ability bar's own
                 // configured side (same vertical half, flipped horizontal) —
                 // distinct from the local mirror-stack below, which flanks
-                // the ability bar directly. Also doesn't affect the labels.
+                // the ability bar directly. Not attached to the ability bar,
+                // so the regular default texture applies.
                 int[] pos = edgeFlushPosition(!position.isRight(), position.isTop(),
                         screenWidth, screenHeight, def);
-                renderCustomMeter(graphics, pos[0] + def.getOffsetX(),
-                        pos[1] + def.getOffsetY(), def, meter);
+                renderCustomMeter(graphics, pos[0] + def.getOffsetX(), pos[1] + def.getOffsetY(),
+                        resolveFrame(def, DEFAULT_FRAME), resolveFill(def, DEFAULT_FILL), def, meter);
                 continue;
             }
 
@@ -199,14 +223,21 @@ public class MeterOverlay implements IGuiOverlay {
 
             // Mirrored onto the ability bar's other side — the labels' side —
             // stacking further inward for each additional custom meter.
-            // Texture doesn't factor into this: every custom meter without a
-            // fixed position is placed the exact same way, texture or not.
+            // Texture doesn't factor into the POSITION: every custom meter
+            // without a fixed position is placed the exact same way, texture
+            // or not. It does affect which DEFAULT texture applies, though:
+            // by construction of mirrorBase, an AUTO meter's own right edge
+            // always overlaps the ability bar's left edge (true regardless of
+            // whether the ability bar itself is left- or right-anchored on
+            // screen) — the same relationship stamina has, just flipped. So
+            // when no custom texture is set, the pre-flipped LEFT variant is
+            // the correct default, not the regular one stamina itself uses.
             int meterX = mirrorBase - renderW - innerCumulative;
             int meterY = staminaY;
             innerCumulative += renderW + METER_GAP;
 
-            renderCustomMeter(graphics, meterX + def.getOffsetX(),
-                    meterY + def.getOffsetY(), def, meter);
+            renderCustomMeter(graphics, meterX + def.getOffsetX(), meterY + def.getOffsetY(),
+                    resolveFrame(def, DEFAULT_FRAME_LEFT), resolveFill(def, DEFAULT_FILL_LEFT), def, meter);
         }
     }
 
@@ -291,10 +322,10 @@ public class MeterOverlay implements IGuiOverlay {
 
     /**
      * Renders one custom meter: frame, then bottom-to-top fill tinted by the
-     * definition's color. Uses the definition's frame/fill textures when set,
-     * falling back to the defaults, and honours per-definition texture size
-     * ({@link MeterDefinition#getTextureWidth()}/{@code getTextureHeight()})
-     * and scale ({@link MeterDefinition#getScale()}).
+     * definition's color. {@code frame}/{@code fill} are fully resolved by
+     * the caller — see {@link #resolveFrame}/{@link #resolveFill} — since
+     * which fallback texture applies (regular vs. left-mirrored) depends on
+     * the positioning mode, not just whether the definition set a custom one.
      *
      * <h3>Why scale doesn't need to read the GUI Scale option</h3>
      * <p>{@code IGuiOverlay.render} is already called with a PoseStack that
@@ -309,10 +340,8 @@ public class MeterOverlay implements IGuiOverlay {
      * multiplying manually would double-apply it.</p>
      */
     private void renderCustomMeter(GuiGraphics graphics, int x, int y,
+                                   ResourceLocation frame, ResourceLocation fill,
                                    MeterDefinition def, MeterInstance meter) {
-        ResourceLocation frame = def.getFrameTexture() != null ? def.getFrameTexture() : DEFAULT_FRAME;
-        ResourceLocation fill = def.getFillTexture() != null ? def.getFillTexture() : DEFAULT_FILL;
-
         int texW = def.getTextureWidth() != null ? def.getTextureWidth() : TEX_WIDTH;
         int texH = def.getTextureHeight() != null ? def.getTextureHeight() : TEX_HEIGHT;
         float scale = def.getScale();
@@ -357,6 +386,16 @@ public class MeterOverlay implements IGuiOverlay {
         RenderSystem.disableBlend();
 
         if (scaled) poseStack.popPose();
+    }
+
+    /** Resolves a meter's custom frame texture, or {@code fallback} if none is set. */
+    private static ResourceLocation resolveFrame(MeterDefinition def, ResourceLocation fallback) {
+        return def.getFrameTexture() != null ? def.getFrameTexture() : fallback;
+    }
+
+    /** Resolves a meter's custom fill texture, or {@code fallback} if none is set. */
+    private static ResourceLocation resolveFill(MeterDefinition def, ResourceLocation fallback) {
+        return def.getFillTexture() != null ? def.getFillTexture() : fallback;
     }
 
     /** Ticks per minute — used to calculate overuse timer fraction. */

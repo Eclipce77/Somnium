@@ -271,22 +271,25 @@ public class MeterOverlay implements IGuiOverlay {
      * How many extra pixels {@code AbilityBarOverlay} should push its keybind
      * labels beyond its normal {@code KEYBIND_LABEL_GAP}, to clear the custom
      * meters mirrored onto the label's side of the ability bar (see this
-     * class's javadoc). Returns 0 if there are none — fixed-position meters
-     * never affect this, since they don't render on the label's side.
+     * class's javadoc). Returns 0 if there are none — fixed-position,
+     * locked-corner, and mirror-opposite-screen meters never affect this,
+     * since none of them render on the label's side.
      *
-     * @param abilityBarX the ability bar's own (unshifted) X, exactly as
-     *                    {@code AbilityBarOverlay.calculateBarX} computes it
-     * @param paged       whether the paged bar variant is currently showing
+     * <p>Deliberately a flat sum of each visible AUTO meter's own rendered
+     * footprint ({@code width + gap}) — not a geometric recomputation of
+     * where the mirror-stack's outer edge actually lands. The two happen to
+     * differ slightly because the mirror placement lets a meter overlap a few
+     * pixels into the ability bar's own footprint (mirroring stamina's own
+     * overlap on its side); the label offset intentionally ignores that and
+     * just adds the plain footprint on top of the label's existing,
+     * unchanged {@code KEYBIND_LABEL_GAP} — so with no meter active, labels
+     * sit at exactly their original position, and with one active, they sit
+     * at that same original position plus exactly the meter's own width.</p>
      */
-    public static int getKeybindLabelExtraOffset(@Nullable SomniumPlayerData data,
-                                                 int abilityBarX, boolean paged) {
+    public static int getKeybindLabelExtraOffset(@Nullable SomniumPlayerData data) {
         if (data == null) return 0;
 
-        int xOffset = paged ? PAGED_X : STANDARD_X;
-        int mirrorBase = abilityBarX + (ABILITY_BAR_WIDTH - xOffset);
-
-        int cumulative = 0;
-        boolean any = false;
+        int total = 0;
         for (MeterDefinition def : MeterDefinition.getAll()) {
             if (def.getScreenPosition() != null) continue;
             if (def.getLockedCorner() != null) continue;
@@ -296,13 +299,9 @@ public class MeterOverlay implements IGuiOverlay {
             if (!isVisible(def, data)) continue;
 
             int texW = def.getTextureWidth() != null ? def.getTextureWidth() : TEX_WIDTH;
-            cumulative += Math.round(texW * def.getScale()) + METER_GAP;
-            any = true;
+            total += Math.round(texW * def.getScale()) + METER_GAP;
         }
-        if (!any) return 0;
-
-        int leftmostEdge = mirrorBase - cumulative;
-        return Math.max(0, abilityBarX - leftmostEdge);
+        return total;
     }
 
     /**

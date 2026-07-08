@@ -252,13 +252,9 @@ public class AbilityBarOverlay implements IGuiOverlay {
         int barX = calculateBarX(position, screenWidth, offsetX);
         int barY = calculateBarY(position, screenHeight, visibleHeight, offsetY);
 
-        // Must match MeterOverlay's own internal "paged" check exactly (it
-        // picks PAGED_X vs STANDARD_X off this same condition) so the label
-        // offset lines up with whatever mirrorBase MeterOverlay actually used
-        // this frame — the local `paged` above is a different, texture-only
-        // condition and isn't the right one to reuse here.
-        boolean meterPaged = isPaged() && !isShowingAlternateBar();
-        int labelExtraOffset = MeterOverlay.getKeybindLabelExtraOffset(data, barX, meterPaged);
+        // A flat sum of each visible AUTO meter's own footprint — doesn't
+        // depend on barX or paged state, just which meters are visible.
+        int labelExtraOffset = MeterOverlay.getKeybindLabelExtraOffset(data);
 
         Font font = mc.font;
 

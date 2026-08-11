@@ -4,6 +4,8 @@ import com.mojang.logging.LogUtils;
 import net.minecraft.client.model.PlayerModel;
 import net.minecraft.client.model.geom.ModelPart;
 import net.minecraft.world.entity.player.Player;
+import org.joml.Quaternionf;
+import org.joml.Vector3f;
 import org.slf4j.Logger;
 import software.bernie.geckolib.cache.object.BakedGeoModel;
 import software.bernie.geckolib.cache.object.GeoBone;
@@ -350,15 +352,15 @@ public final class SomniumCastBoneApplicator {
      * all the other bones inherit body's PoseStack frame. Vanilla Minecraft's
      * {@link PlayerModel}, in contrast, exposes every part as a flat, independent
      * {@link ModelPart} with no parent reference, so by default each part here only ever
-     * reflects its own keyframes — body's own motion does not reach head/arms/legs at all.</p>
+     * reflects its own keyframes.</p>
      *
-     * <p>Most "lean" and "wind-up" animations don't need it — a modest body rotation reads
-     * fine on its own cube without carrying the limbs, and Pistol/Gatling/Bazooka/Rocket were
-     * authored and screenshot-tuned around exactly that. Large whole-body transformation
-     * animations do need it (a 45° body lean with no carried limbs visibly detaches the head
-     * and legs from the torso). See {@link #applyBodyRotationCompound} for the opt-in fix,
-     * gated behind {@link CastAnimationOptions#propagateBodyTransform()} so it never touches
-     * an animation that doesn't explicitly ask for it.</p>
+     * <p>Most "lean" and "wind-up" animations don't need body's motion to reach the limbs —
+     * Pistol/Gatling/Bazooka/Rocket were authored and screenshot-tuned around exactly that.
+     * Large whole-body transformation animations do need it. See
+     * {@link #applyBodyRotationCompound}, called right after this method, for the proper
+     * (quaternion-composed, not scalar-add) fix — gated behind
+     * {@link CastAnimationOptions#propagateBodyTransform()} so it never touches an
+     * animation that doesn't explicitly ask for it.</p>
      */
     private static void applyAllBones(BakedGeoModel bakedModel,
                                       PlayerModel<?> playerModel,
@@ -378,23 +380,49 @@ public final class SomniumCastBoneApplicator {
     }
 
     /**
-     * Registers body's converted rotation + position delta as an outer render-time wrap on
-     * every other base part (and its overlay layer), so they're carried through space by
-     * body's motion the way real parented children would be — see
-     * {@link CastAnimationOptions#propagateBodyTransform()} for the full rationale and
-     * {@code somnium$applyBodyRotationCompound} in {@code ModelPartRenderMixin} for how the
-     * wrap is actually applied (before each part's own {@code translateAndRotate}, mirroring
-     * the existing {@code changeDirectionOnLook} technique).
+     * Compounds body's rotation and position onto every other base part — head, both arms,
+     * both legs — the way a real parent bone would carry its children. No-ops entirely
+     * unless {@code options.propagateBodyTransform()} is set.
      *
-     * <p>No-ops entirely unless {@code options.propagateBodyTransform()} is set — existing
-     * cast abilities never touch this path.</p>
+     * <h3>Why quaternion composition, not a scalar rotation add</h3>
+     * An earlier version of this fix tried registering body's rotation as a render-time
+     * PoseStack wrap and, before that, adding body's position as a flat scalar onto each
+     * child's own position. Neither produced a visible change worth the complexity, and
+     * for good reason: at body's ~45° peak rotation in {@code gear_second}, the dominant
+     * visual effect isn't a small offset, it's the child's REST PIVOT sweeping through a
+     * large arc as it orbits body's pivot — exactly the effect confirmed against the
+     * reference Blockbench render (a deep crouch, torso folding down near the legs), which
+     * a flat position add can't produce at all. Getting this right needs the same math
+     * GeckoLib's own renderer uses to walk a real parent-child hierarchy: {@code
+     * RenderUtils.rotateMatrixAroundBone} composes a bone's Z, then Y, then X rotation in
+     * sequence (matching JOML's {@code rotationZYX} convention exactly) — a parent's full
+     * rotation composes with a child's own local rotation via quaternion multiplication
+     * before the child's pivot offset is ever applied, so the pivot orbits the parent's
+     * rotation instead of just adding to it.
      *
-     * <p>Only handles body's OWN rotation on the X axis, because that's all any current clip
-     * (gear_second) uses — {@code body}'s rotation there is pure {@code [rotX, 0, 0]}. A future
-     * transformation whose body bone rotates on Y or Z too would need this generalised to a
-     * full {@code rotationZYX}-order quaternion (matching vanilla {@code ModelPart}'s own
-     * rotation composition) rather than a single-axis {@code Axis.XP} rotation — deliberately
-     * not built now since there's no data to verify the axis order against.</p>
+     * <h3>Coordinate conversion</h3>
+     * Reuses {@link #applyBoneIfPresent}'s already-proven sign conversion (negate all three
+     * rotation axes; negate X/Y position, keep Z) for both body and each child, since that
+     * conversion is empirically validated against every existing Gomu clip and isn't
+     * re-derived here. {@link SomniumBoneAnchors#restPivot} gives each child's rest pivot
+     * in vanilla block units (body's own rest pivot is the origin), used to compute how far
+     * that pivot moves when swept through body's rotation.
+     *
+     * <h3>What this deliberately does NOT do</h3>
+     * Body's own SCALE isn't compounded (no current clip uses it on body). Rotation is only
+     * composed for the six base parts named below — overlay layers (hat, sleeves, pants)
+     * pick up the result automatically through {@link #syncLayersFromBaseParts}'s copyFrom
+     * pass, which runs after this method.
+     *
+     * <h3>A latent assumption worth knowing about</h3>
+     * This overwrites (not adds to) each carried part's {@code xRot/yRot/zRot} with the
+     * fully-composed value. That's correct as long as {@code suppressVanillaAnimOn} covers
+     * every part this method touches — true for Gear Second today — because
+     * {@code resetPose()} already zeroed the vanilla locomotion contribution before
+     * {@link #applyAllBones} ran. If a future transformation stops suppressing one of these
+     * parts (to let vanilla walk-swing show through, as flagged as a possible tweak for
+     * Gear Second's legs), this method would need to preserve that vanilla rotation instead
+     * of overwriting it.
      */
     private static void applyBodyRotationCompound(BakedGeoModel bakedModel,
                                                   PlayerModel<?> playerModel,
@@ -403,41 +431,78 @@ public final class SomniumCastBoneApplicator {
 
         Optional<GeoBone> bodyBone = bakedModel.getBone("body");
         if (bodyBone.isEmpty() || bodyBone.get().isHidden()) return;
+        GeoBone bb = bodyBone.get();
 
-        GeoBone b = bodyBone.get();
+        // Body's own vanilla-equivalent rotation, built exactly like applyBoneIfPresent's
+        // per-axis conversion but composed into a quaternion via rotationZYX so it can be
+        // multiplied with each child's own rotation below.
+        float bodyVXRot = -bb.getRotX();
+        float bodyVYRot = -bb.getRotY();
+        float bodyVZRot = -bb.getRotZ();
+        Quaternionf qBody = new Quaternionf().rotationZYX(bodyVZRot, bodyVYRot, bodyVXRot);
 
-        // Same sign conversion applyBoneIfPresent uses for every other bone's rotation/
-        // position (Blockbench -> vanilla ModelPart), so a part carried by this wrap ends up
-        // at the same effective position/orientation body's own cube uses for itself.
-        float rotXRad = -b.getRotX();
+        // Body's own position delta, pixel units (matches ModelPart.x/y/z directly — same
+        // conversion applyBoneIfPresent uses for every non-body bone's position).
+        float bodyPosDX = -bb.getPosX();
+        float bodyPosDY = -bb.getPosY();
+        float bodyPosDZ =  bb.getPosZ();
 
-        // Position needs an additional /16 unit conversion here that applyBoneIfPresent's
-        // field writes don't: ModelPart.x/y/z are raw model (pixel) units, but
-        // PoseStack.translate() at this mixin injection point operates in BLOCK units (see
-        // ARM_SCALE_ANCHOR_Y's doc above for the same conversion elsewhere in this class).
-        float dx = -b.getPosX() / 16f;
-        float dy = -b.getPosY() / 16f;
-        float dz =  b.getPosZ() / 16f;
+        if (bodyVXRot == 0f && bodyVYRot == 0f && bodyVZRot == 0f
+                && bodyPosDX == 0f && bodyPosDY == 0f && bodyPosDZ == 0f) {
+            return;
+        }
 
-        if (rotXRad == 0f && dx == 0f && dy == 0f && dz == 0f) return;
-
-        registerCompound(playerModel.head,       rotXRad, dx, dy, dz);
-        registerCompound(playerModel.hat,        rotXRad, dx, dy, dz);
-        registerCompound(playerModel.rightArm,   rotXRad, dx, dy, dz);
-        registerCompound(playerModel.rightSleeve,rotXRad, dx, dy, dz);
-        registerCompound(playerModel.leftArm,    rotXRad, dx, dy, dz);
-        registerCompound(playerModel.leftSleeve, rotXRad, dx, dy, dz);
-        registerCompound(playerModel.rightLeg,   rotXRad, dx, dy, dz);
-        registerCompound(playerModel.rightPants, rotXRad, dx, dy, dz);
-        registerCompound(playerModel.leftLeg,    rotXRad, dx, dy, dz);
-        registerCompound(playerModel.leftPants,  rotXRad, dx, dy, dz);
-        // body itself is intentionally excluded — it's the source of this offset, not a
-        // recipient of it; it already applies its own rotation/position directly via
-        // applyBoneIfPresent's normal field writes, unchanged.
+        compoundOntoChild(bakedModel, playerModel.head,     "head",      qBody, bodyPosDX, bodyPosDY, bodyPosDZ);
+        compoundOntoChild(bakedModel, playerModel.rightArm, "right_arm", qBody, bodyPosDX, bodyPosDY, bodyPosDZ);
+        compoundOntoChild(bakedModel, playerModel.leftArm,  "left_arm",  qBody, bodyPosDX, bodyPosDY, bodyPosDZ);
+        compoundOntoChild(bakedModel, playerModel.rightLeg, "right_leg", qBody, bodyPosDX, bodyPosDY, bodyPosDZ);
+        compoundOntoChild(bakedModel, playerModel.leftLeg,  "left_leg",  qBody, bodyPosDX, bodyPosDY, bodyPosDZ);
     }
 
-    private static void registerCompound(ModelPart part, float rotXRad, float dx, float dy, float dz) {
-        SomniumBoneScaleMap.setBodyRotationCompound(part, rotXRad, dx, dy, dz);
+    /**
+     * Composes body's rotation (outer/parent) with one child bone's own rotation
+     * (inner/local), writes the combined result directly onto the child's {@link ModelPart},
+     * and adds the position delta caused by the child's rest pivot orbiting body's rotation
+     * on top of body's own translation. See {@link #applyBodyRotationCompound}'s javadoc for
+     * the full reasoning.
+     */
+    private static void compoundOntoChild(BakedGeoModel bakedModel, ModelPart part, String boneName,
+                                          Quaternionf qBody, float bodyPosDX, float bodyPosDY, float bodyPosDZ) {
+        Optional<GeoBone> opt = bakedModel.getBone(boneName);
+        if (opt.isEmpty() || opt.get().isHidden()) return;
+        GeoBone cb = opt.get();
+
+        float childVXRot = -cb.getRotX();
+        float childVYRot = -cb.getRotY();
+        float childVZRot = -cb.getRotZ();
+        Quaternionf qChild = new Quaternionf().rotationZYX(childVZRot, childVYRot, childVXRot);
+
+        // qBody * qChild: transforming a point applies qChild first (the child's own local
+        // rotation), then qBody (body's rotation wrapping around it) — exactly how GeckoLib's
+        // renderRecursively nests a child's PoseStack transform inside its already-rotated
+        // parent frame.
+        Quaternionf qCombined = new Quaternionf(qBody).mul(qChild);
+
+        Vector3f euler = new Vector3f();
+        qCombined.getEulerAnglesZYX(euler);
+        part.xRot = euler.x;
+        part.yRot = euler.y;
+        part.zRot = euler.z;
+
+        // Rest pivot (block units; body's own rest pivot is the origin, so this offset is
+        // already relative to it) swept through body's rotation — the arc a real child bone's
+        // pivot would travel as its parent rotates. Delta only (rotatedOffset - offset), not
+        // the absolute rotated position, then converted to pixel units to match
+        // ModelPart.x/y/z and added on top of whatever applyBoneIfPresent already wrote for
+        // this child's own local position delta moments ago.
+        float[] restPivot = SomniumBoneAnchors.restPivot(boneName);
+        Vector3f offset = new Vector3f(restPivot[0], restPivot[1], restPivot[2]);
+        Vector3f rotatedOffset = qBody.transform(new Vector3f(offset));
+        Vector3f pivotShiftPixels = new Vector3f(rotatedOffset).sub(offset).mul(16f);
+
+        part.x += bodyPosDX + pivotShiftPixels.x();
+        part.y += bodyPosDY + pivotShiftPixels.y();
+        part.z += bodyPosDZ + pivotShiftPixels.z();
     }
 
     /**

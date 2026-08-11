@@ -1,7 +1,9 @@
 package net.eclipce.somnium.compat.geckolib.player.cast;
 
 import net.minecraft.network.FriendlyByteBuf;
+import net.minecraft.resources.ResourceLocation;
 
+import javax.annotation.Nullable;
 import java.util.Collections;
 import java.util.EnumSet;
 import java.util.Set;
@@ -63,21 +65,20 @@ public final class CastAnimationOptions {
      */
     private final int startOffsetTicks;
     /**
-     * When {@code true}, {@code body}'s animated rotation (and position) is compounded
-     * onto every other base part's render transform this frame — an outer rotation about
-     * body's rest pivot, applied before each part's own transform, the same technique
-     * {@code changeDirectionOnLook} uses. This is what makes head/arms/legs behave as if
-     * they were real children of body instead of independent siblings, which large
-     * whole-body transformation animations (Gear Second and similar) need to stay visually
-     * attached. Defaults to {@code false} and is opt-in per animation for one reason:
-     * Pistol/Gatling/Bazooka/Rocket's existing clips were authored and screenshot-tuned
-     * against the OLD non-compounding behavior (their limbs' keyframes already account for
-     * body's small rotation NOT reaching them) — turning this on unconditionally would
-     * subtly change how every one of those already-working animations reads. Transformation
-     * abilities (which don't use {@code changeDirectionOnLook}) are the intended, and
-     * currently only, users of this flag.
+     * When non-null, keys a {@link BoneHierarchy} (see {@link BoneHierarchyRegistry}) that
+     * describes how this animation's bones are parented to each other for compounding
+     * purposes — an outer bone's rotation and position carry its children with it, the way
+     * a real parent-child skeleton would, before the result is written onto the (still flat,
+     * unparented) vanilla {@code ModelPart}s. Null means no compounding at all: every bone
+     * reacts only to its own keyframes, exactly Somnium's original behavior.
+     *
+     * <p>This is opt-in per animation for one reason: most existing cast abilities were
+     * authored and screenshot-tuned against the flat, non-compounding behavior — a modest
+     * body rotation reads fine on its own without carrying the limbs. Large whole-body
+     * transformation animations are the case that actually needs a hierarchy; setting this
+     * only changes behavior for animations that explicitly reference one.</p>
      */
-    private final boolean propagateBodyTransform;
+    private final ResourceLocation boneHierarchy;
 
     private CastAnimationOptions(Set<CastBodyPart> suppressVanillaAnimOn,
                                  boolean           onExecuteBodyAlign,
@@ -89,7 +90,7 @@ public final class CastAnimationOptions {
                                  int     animationLengthTicks,
                                  float   capturedLookPitch,
                                  int     startOffsetTicks,
-                                 boolean propagateBodyTransform) {
+                                 ResourceLocation boneHierarchy) {
         this.suppressVanillaAnimOn  = suppressVanillaAnimOn;
         this.onExecuteBodyAlign     = onExecuteBodyAlign;
         this.changeDirectionOnLook  = changeDirectionOnLook;
@@ -100,7 +101,7 @@ public final class CastAnimationOptions {
         this.animationLengthTicks  = animationLengthTicks;
         this.capturedLookPitch      = capturedLookPitch;
         this.startOffsetTicks       = startOffsetTicks;
-        this.propagateBodyTransform = propagateBodyTransform;
+        this.boneHierarchy          = boneHierarchy;
     }
 
     /**
@@ -123,7 +124,7 @@ public final class CastAnimationOptions {
                 animationLengthTicks,
                 pitchDegrees,
                 startOffsetTicks,
-                propagateBodyTransform);
+                boneHierarchy);
     }
 
     // ─── Accessors ─────────────────────────────────────────────────────────────
@@ -197,10 +198,11 @@ public final class CastAnimationOptions {
     public int startOffsetTicks() { return startOffsetTicks; }
 
     /**
-     * @return {@code true} if body's rotation/position should be compounded onto every
-     *         other base part this frame. See the field javadoc for why this is opt-in.
+     * @return the {@link BoneHierarchy} key this animation compounds through, or
+     *         {@code null} for no compounding. See the field javadoc for the full rationale.
      */
-    public boolean propagateBodyTransform() { return propagateBodyTransform; }
+    @Nullable
+    public ResourceLocation boneHierarchy() { return boneHierarchy; }
 
     public static Builder builder() { return new Builder(); }
 
@@ -234,7 +236,7 @@ public final class CastAnimationOptions {
                 buf.readVarInt(),
                 buf.readFloat(),
                 buf.readVarInt(),
-                buf.readBoolean());
+                buf.readBoolean() ? buf.readResourceLocation() : null);
     }
 
     /**
@@ -253,7 +255,10 @@ public final class CastAnimationOptions {
         buf.writeVarInt(animationLengthTicks);
         buf.writeFloat(capturedLookPitch);
         buf.writeVarInt(startOffsetTicks);
-        buf.writeBoolean(propagateBodyTransform);
+        buf.writeBoolean(boneHierarchy != null);
+        if (boneHierarchy != null) {
+            buf.writeResourceLocation(boneHierarchy);
+        }
     }
 
     /**
@@ -300,7 +305,7 @@ public final class CastAnimationOptions {
         private boolean heldItemsShown    = true;
         private int     animationLengthTicks = 0;
         private int     startOffsetTicks     = 0;
-        private boolean propagateBodyTransform = false;
+        private ResourceLocation boneHierarchy = null;
 
         private Builder() {}
 
@@ -432,13 +437,15 @@ public final class CastAnimationOptions {
         }
 
         /**
-         * Opts this animation into body-rotation/position compounding onto every other
-         * base part — see the field javadoc on {@link CastAnimationOptions#propagateBodyTransform}
-         * for why this defaults to {@code false} and is meant for transformation-driven
-         * whole-body animations rather than the existing per-limb cast abilities.
+         * Opts this animation into compounding through the named {@link BoneHierarchy} —
+         * see {@link CastAnimationOptions#boneHierarchy} for the full rationale. Pass a key
+         * like {@code new ResourceLocation("romancedawn", "gear_second")} matching a file at
+         * {@code assets/romancedawn/bone_hierarchy/gear_second.json}. Unset (or passed
+         * {@code null}) means no compounding — every bone reacts only to its own keyframes,
+         * Somnium's original behavior.
          */
-        public Builder propagateBodyTransform(boolean value) {
-            this.propagateBodyTransform = value;
+        public Builder boneHierarchy(@Nullable ResourceLocation hierarchyId) {
+            this.boneHierarchy = hierarchyId;
             return this;
         }
 
@@ -460,7 +467,7 @@ public final class CastAnimationOptions {
                     animationLengthTicks,
                     0f, // capturedLookPitch is stamped later, server-side, at execution
                     startOffsetTicks,
-                    propagateBodyTransform);
+                    boneHierarchy);
         }
     }
 }

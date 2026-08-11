@@ -241,6 +241,26 @@ public class TransformationAbilityType extends AbilityType {
             instance.setPhase(TransformationPhase.TRANSFORMING_IN);
             instance.resetPhaseTicks();
             instance.setTriggeredByCondition(false);
+
+            // BUGFIX: voluntary (bar-toggle) activation never marked this as the
+            // player's active transformation. SomniumTickHandler.tickTransformations()
+            // only drives the TRANSFORMING_IN -> TRANSFORMED -> TRANSFORMING_OUT phase
+            // machine (and therefore only ever calls onTransformComplete /
+            // onDeTransformStart / onDeTransformComplete) when
+            // data.getActiveTransformation() is non-null. The trigger-driven path
+            // (TransformationTickHandler.evaluateTrigger) already sets this; voluntary
+            // activation must do the same or the phase gets stuck at TRANSFORMING_IN
+            // forever and every lifecycle hook past onTransformStart is dead code.
+            net.eclipce.somnium.core.data.SomniumPlayerData data =
+                    net.eclipce.somnium.core.data.SomniumCapability.get(context.getPlayer());
+            if (data != null) {
+                ResourceLocation transId =
+                        net.eclipce.somnium.core.registry.SomniumRegistries.getAbilityKey(this);
+                if (transId != null) {
+                    data.setActiveTransformation(transId);
+                }
+            }
+
             onTransformStart(context);
         }
     }

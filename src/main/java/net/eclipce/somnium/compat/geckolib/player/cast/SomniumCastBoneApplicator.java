@@ -340,43 +340,67 @@ public final class SomniumCastBoneApplicator {
      * Applies every animated bone in {@code bakedModel} onto its corresponding vanilla
      * {@link ModelPart}, additively.
      *
-     * <p><b>Root bone translation is suppressed.</b> In Blockbench (and GeckoLib's
+     * <p><b>Root bone translation now propagates.</b> In Blockbench (and GeckoLib's
      * recursive PoseStack renderer), the {@code body} bone is the parent of every
      * other bone — translating body translates the entire skeleton because all the
      * other bones inherit the body's PoseStack frame. Vanilla Minecraft's
      * {@link PlayerModel}, in contrast, exposes every part as a flat, independent
-     * {@link ModelPart} with no parent reference. There is no way to faithfully
-     * replicate Blockbench's body translation by writing to individual
-     * {@link ModelPart#x}/{@code y}/{@code z} fields: writing only to the body
-     * detaches the chest from the head and limbs; cascading the offset to every
-     * other part detaches the head from the rotated body (because we'd also need to
-     * rotate each child around the body's pivot, not its own — proper 4×4 matrix
-     * math, not a scalar add). Faithfully matching GeckoLib here would require a
-     * separate PoseStack-translation mixin and is deferred.</p>
+     * {@link ModelPart} with no parent reference, so this method computes body's
+     * converted position delta once and adds it onto every other base part's own
+     * delta — emulating "carried along by the parent" without needing a full
+     * PoseStack-hierarchy mixin.</p>
      *
-     * <p>For now we drop the body bone's position channel and keep its rotation and
-     * scale channels. Most "lean" and "wind-up" animations can be authored using
-     * body rotation (e.g. {@code body.rotX = -0.3} for a backward lean) instead of
-     * body translation, and read identically on the player. Per-limb translations
-     * (right_arm, head, etc.) continue to work normally because those parts are
-     * leaves of the bone tree and their offsets translate cleanly to ModelPart
-     * pivot offsets.</p>
+     * <p><b>Rotation is deliberately NOT propagated</b> — only position. Body's
+     * rotation continues to apply only to body's own {@link ModelPart}, as before.
+     * This is intentional, not an oversight: propagating rotation would require
+     * rotating each child around body's pivot (real 4×4 matrix math, not a scalar
+     * add), and the existing Pistol/Gatling/Bazooka/Rocket clips were authored and
+     * screenshot-tuned around body's rotation reading correctly on its own cube
+     * without any child inheriting it — propagating it now would double up motion
+     * that's already baked into each limb's own keyframes on those clips. Position
+     * had no such baked-in compensation (it was silently dropped entirely, not
+     * worked around), so it's safe to turn on independently of rotation.</p>
+     *
+     * <p><b>Audited impact against every current clip</b> (see chat history for the
+     * script): Pistol and Rocket clips have no body position keyframes at all;
+     * Gatling has no body bone at all — all three are provably unaffected. Bazooka
+     * charge/release have a small body Z-shift (max 1.5 units ≈ 0.09 blocks) that
+     * will now read through to the limbs — likely imperceptible, but real; watch
+     * for it on the next Bazooka pass. Gear Second is the intended target: its
+     * body position swings up to 5.6 units (~0.35 blocks) and previously did
+     * nothing at all.</p>
      */
     private static void applyAllBones(BakedGeoModel bakedModel,
                                       PlayerModel<?> playerModel,
                                       java.util.Set<String> animatedBones) {
+        // Computed once per frame from body's own baked bone (not re-read per child).
+        // Same Blockbench -> vanilla ModelPart sign conversion used everywhere else in
+        // this class (X and Y mirrored, Z unchanged) — see applyBoneIfPresent below.
+        float bodyDeltaX = 0f, bodyDeltaY = 0f, bodyDeltaZ = 0f;
+        Optional<GeoBone> bodyBone = bakedModel.getBone("body");
+        if (bodyBone.isPresent() && !bodyBone.get().isHidden()) {
+            GeoBone b = bodyBone.get();
+            bodyDeltaX = -b.getPosX();
+            bodyDeltaY = -b.getPosY();
+            bodyDeltaZ =  b.getPosZ();
+        }
+
         // Only base parts — layers (sleeves, pants, hat, jacket) sync to their base
         // part via syncLayersFromBaseParts() once all base-part mutations are done.
         // Layer-specific animation channels in .geo.json files are intentionally
         // ignored — animators virtually always want sleeve to match arm exactly, and
         // bypassing that with an independent sleeve channel would be a rare-enough
         // case to handle as a future opt-in rather than baseline behaviour.
-        applyBoneIfPresent(bakedModel, playerModel, "body",      animatedBones);
-        applyBoneIfPresent(bakedModel, playerModel, "head",      animatedBones);
-        applyBoneIfPresent(bakedModel, playerModel, "right_arm", animatedBones);
-        applyBoneIfPresent(bakedModel, playerModel, "left_arm",  animatedBones);
-        applyBoneIfPresent(bakedModel, playerModel, "right_leg", animatedBones);
-        applyBoneIfPresent(bakedModel, playerModel, "left_leg",  animatedBones);
+        //
+        // body's own call passes zero carried-offset — its position IS the source of
+        // the offset, not a recipient of it, so adding bodyDelta to itself would
+        // double it.
+        applyBoneIfPresent(bakedModel, playerModel, "body",      animatedBones, 0f, 0f, 0f);
+        applyBoneIfPresent(bakedModel, playerModel, "head",      animatedBones, bodyDeltaX, bodyDeltaY, bodyDeltaZ);
+        applyBoneIfPresent(bakedModel, playerModel, "right_arm", animatedBones, bodyDeltaX, bodyDeltaY, bodyDeltaZ);
+        applyBoneIfPresent(bakedModel, playerModel, "left_arm",  animatedBones, bodyDeltaX, bodyDeltaY, bodyDeltaZ);
+        applyBoneIfPresent(bakedModel, playerModel, "right_leg", animatedBones, bodyDeltaX, bodyDeltaY, bodyDeltaZ);
+        applyBoneIfPresent(bakedModel, playerModel, "left_leg",  animatedBones, bodyDeltaX, bodyDeltaY, bodyDeltaZ);
     }
 
     /**
@@ -396,7 +420,8 @@ public final class SomniumCastBoneApplicator {
     private static void applyBoneIfPresent(BakedGeoModel baked,
                                            PlayerModel<?> playerModel,
                                            String boneName,
-                                           java.util.Set<String> animatedBones) {
+                                           java.util.Set<String> animatedBones,
+                                           float carriedDeltaX, float carriedDeltaY, float carriedDeltaZ) {
         Optional<GeoBone> opt = baked.getBone(boneName);
         if (opt.isEmpty()) return;
 
@@ -416,6 +441,9 @@ public final class SomniumCastBoneApplicator {
         // alone reverses Y and Z rotations; the Y-flip alone reverses X and Z rotations;
         // combined, all three axes flip. Empirically: a Blockbench rotX of +π/2 (arm
         // forward) maps to a vanilla xRot of -π/2 (arm forward) — same visual, opposite sign.
+        //
+        // NOT propagated from body (see applyAllBones javadoc) — only this bone's own
+        // rotation applies, exactly as before.
         float rx = bone.getRotX();
         float ry = bone.getRotY();
         float rz = bone.getRotZ();
@@ -429,20 +457,21 @@ public final class SomniumCastBoneApplicator {
         // Coordinate conversion: Blockbench → vanilla ModelPart.
         // Same scale(-1, -1, 1) flip as above — X and Y are mirrored, Z is unchanged.
         //
-        // The body bone's position channel is intentionally skipped — see Javadoc on
-        // applyAllBones for the rationale (Blockbench root-bone translation has no
-        // clean equivalent on the flat ModelPart hierarchy; rotation and scale on
-        // the body still propagate visually because they affect the body's own cube
-        // mesh directly).
-        if (!"body".equals(boneName)) {
-            float px = bone.getPosX();
-            float py = bone.getPosY();
-            float pz = bone.getPosZ();
+        // carriedDeltaX/Y/Z is body's own already-converted position delta (zero for
+        // body's own call — see applyAllBones), added on top of this bone's own local
+        // delta so every part is rigidly carried along with body's translation, the
+        // way a real parented child bone would be.
+        float px = bone.getPosX();
+        float py = bone.getPosY();
+        float pz = bone.getPosZ();
 
-            if (px != 0f) { part.x -= px; anyTransform = true; }
-            if (py != 0f) { part.y -= py; anyTransform = true; }
-            if (pz != 0f) { part.z += pz; anyTransform = true; }
-        }
+        float dx = -px + carriedDeltaX;
+        float dy = -py + carriedDeltaY;
+        float dz =  pz + carriedDeltaZ;
+
+        if (dx != 0f) { part.x += dx; anyTransform = true; }
+        if (dy != 0f) { part.y += dy; anyTransform = true; }
+        if (dz != 0f) { part.z += dz; anyTransform = true; }
 
         // ── Multiplicative scale (applied via PoseStack in ModelPartRenderMixin) ──
         // Scale cannot be stored as a field on ModelPart — it must be applied via

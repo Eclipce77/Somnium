@@ -49,6 +49,18 @@ public final class SomniumBoneScaleMap {
     // animation tilts about the true shoulder/hip.
     private static final Map<ModelPart, float[]> PITCH_MAP = new IdentityHashMap<>();
 
+    // Per-part body-rotation compounding wrap, opted into via
+    // CastAnimationOptions#propagateBodyTransform. Stored as [rotXRad, dx, dy, dz] where
+    // dx/dy/dz are body's own converted position delta in BLOCK units (already includes the
+    // Blockbench -> vanilla sign flip). Applied as an outer wrap about body's rest pivot —
+    // which is (0,0,0) per SomniumBoneAnchors, so no separate pivot storage is needed here.
+    // Kept as a distinct map from PITCH_MAP even though both apply an outer pre-rotation via
+    // the same mixin technique: they represent different concepts (one part's own look-aim
+    // vs. inheriting a DIFFERENT bone's motion) and currently never co-occur on the same part
+    // (transformation animations don't use changeDirectionOnLook), so merging them would only
+    // add confusing coupling for no benefit.
+    private static final Map<ModelPart, float[]> BODY_COMPOUND_MAP = new IdentityHashMap<>();
+
     /**
      * Registers (or multiplies into) a scale for the given {@link ModelPart} this frame.
      *
@@ -106,6 +118,25 @@ public final class SomniumBoneScaleMap {
     }
 
     /**
+     * Registers a body-rotation compounding wrap for a part this frame — see
+     * {@link CastAnimationOptions#propagateBodyTransform} for what this represents and why
+     * it exists. {@code rotXRad}/{@code dx}/{@code dy}/{@code dz} all zero is a no-op (mirrors
+     * the other setters' early-out for identity values). Last writer wins per part, matching
+     * {@link #setLookPitch} — only one compounding source is expected per part per frame.
+     */
+    public static void setBodyRotationCompound(ModelPart part, float rotXRad,
+                                               float dx, float dy, float dz) {
+        if (rotXRad == 0f && dx == 0f && dy == 0f && dz == 0f) return;
+        BODY_COMPOUND_MAP.put(part, new float[]{rotXRad, dx, dy, dz});
+    }
+
+    /** Body-rotation compound data [rotXRad, dx, dy, dz] for this part, or null if none. */
+    @Nullable
+    public static float[] getBodyRotationCompound(ModelPart part) {
+        return BODY_COMPOUND_MAP.get(part);
+    }
+
+    /**
      * Returns the registered scale for this part, or {@code null} if none is registered
      * (implying identity scale — no scale should be applied).
      *
@@ -127,6 +158,7 @@ public final class SomniumBoneScaleMap {
     public static void clearAll() {
         SCALE_MAP.clear();
         PITCH_MAP.clear();
+        BODY_COMPOUND_MAP.clear();
     }
 
     /**
@@ -139,6 +171,7 @@ public final class SomniumBoneScaleMap {
     public static void removeFor(ModelPart part) {
         SCALE_MAP.remove(part);
         PITCH_MAP.remove(part);
+        BODY_COMPOUND_MAP.remove(part);
     }
 
     private SomniumBoneScaleMap() {}

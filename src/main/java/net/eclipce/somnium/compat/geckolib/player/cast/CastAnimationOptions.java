@@ -62,6 +62,22 @@ public final class CastAnimationOptions {
      * start. Should be {@code < animationLengthTicks}.
      */
     private final int startOffsetTicks;
+    /**
+     * When {@code true}, {@code body}'s animated rotation (and position) is compounded
+     * onto every other base part's render transform this frame — an outer rotation about
+     * body's rest pivot, applied before each part's own transform, the same technique
+     * {@code changeDirectionOnLook} uses. This is what makes head/arms/legs behave as if
+     * they were real children of body instead of independent siblings, which large
+     * whole-body transformation animations (Gear Second and similar) need to stay visually
+     * attached. Defaults to {@code false} and is opt-in per animation for one reason:
+     * Pistol/Gatling/Bazooka/Rocket's existing clips were authored and screenshot-tuned
+     * against the OLD non-compounding behavior (their limbs' keyframes already account for
+     * body's small rotation NOT reaching them) — turning this on unconditionally would
+     * subtly change how every one of those already-working animations reads. Transformation
+     * abilities (which don't use {@code changeDirectionOnLook}) are the intended, and
+     * currently only, users of this flag.
+     */
+    private final boolean propagateBodyTransform;
 
     private CastAnimationOptions(Set<CastBodyPart> suppressVanillaAnimOn,
                                  boolean           onExecuteBodyAlign,
@@ -72,7 +88,8 @@ public final class CastAnimationOptions {
                                  boolean heldItemsShown,
                                  int     animationLengthTicks,
                                  float   capturedLookPitch,
-                                 int     startOffsetTicks) {
+                                 int     startOffsetTicks,
+                                 boolean propagateBodyTransform) {
         this.suppressVanillaAnimOn  = suppressVanillaAnimOn;
         this.onExecuteBodyAlign     = onExecuteBodyAlign;
         this.changeDirectionOnLook  = changeDirectionOnLook;
@@ -83,6 +100,7 @@ public final class CastAnimationOptions {
         this.animationLengthTicks  = animationLengthTicks;
         this.capturedLookPitch      = capturedLookPitch;
         this.startOffsetTicks       = startOffsetTicks;
+        this.propagateBodyTransform = propagateBodyTransform;
     }
 
     /**
@@ -104,7 +122,8 @@ public final class CastAnimationOptions {
                 heldItemsShown,
                 animationLengthTicks,
                 pitchDegrees,
-                startOffsetTicks);
+                startOffsetTicks,
+                propagateBodyTransform);
     }
 
     // ─── Accessors ─────────────────────────────────────────────────────────────
@@ -177,6 +196,12 @@ public final class CastAnimationOptions {
      */
     public int startOffsetTicks() { return startOffsetTicks; }
 
+    /**
+     * @return {@code true} if body's rotation/position should be compounded onto every
+     *         other base part this frame. See the field javadoc for why this is opt-in.
+     */
+    public boolean propagateBodyTransform() { return propagateBodyTransform; }
+
     public static Builder builder() { return new Builder(); }
 
     // ─── Network codec ─────────────────────────────────────────────────────────
@@ -208,7 +233,8 @@ public final class CastAnimationOptions {
                 buf.readBoolean(),
                 buf.readVarInt(),
                 buf.readFloat(),
-                buf.readVarInt());
+                buf.readVarInt(),
+                buf.readBoolean());
     }
 
     /**
@@ -227,6 +253,7 @@ public final class CastAnimationOptions {
         buf.writeVarInt(animationLengthTicks);
         buf.writeFloat(capturedLookPitch);
         buf.writeVarInt(startOffsetTicks);
+        buf.writeBoolean(propagateBodyTransform);
     }
 
     /**
@@ -273,6 +300,7 @@ public final class CastAnimationOptions {
         private boolean heldItemsShown    = true;
         private int     animationLengthTicks = 0;
         private int     startOffsetTicks     = 0;
+        private boolean propagateBodyTransform = false;
 
         private Builder() {}
 
@@ -403,6 +431,17 @@ public final class CastAnimationOptions {
             return this;
         }
 
+        /**
+         * Opts this animation into body-rotation/position compounding onto every other
+         * base part — see the field javadoc on {@link CastAnimationOptions#propagateBodyTransform}
+         * for why this defaults to {@code false} and is meant for transformation-driven
+         * whole-body animations rather than the existing per-limb cast abilities.
+         */
+        public Builder propagateBodyTransform(boolean value) {
+            this.propagateBodyTransform = value;
+            return this;
+        }
+
         public CastAnimationOptions build() {
             // EnumSet copies preserve enum-iteration order and use a compact bitset
             // internally — cheap to construct, cheap to iterate.
@@ -420,7 +459,8 @@ public final class CastAnimationOptions {
                     heldItemsShown,
                     animationLengthTicks,
                     0f, // capturedLookPitch is stamped later, server-side, at execution
-                    startOffsetTicks);
+                    startOffsetTicks,
+                    propagateBodyTransform);
         }
     }
 }

@@ -36,6 +36,59 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 @Mixin(ModelPart.class)
 public class ModelPartRenderMixin {
 
+    // ── Body-rotation compounding: wrap the frame in body's own translation + rotation,
+    // BEFORE the bone's own translateAndRotate runs ──
+    //
+    // Opted into per-animation via CastAnimationOptions#propagateBodyTransform (see that
+    // field's javadoc). This is what makes a part behave as a real child of body instead of
+    // an independent sibling: body's rest pivot is (0,0,0) (SomniumBoneAnchors), so this
+    // reduces to "translate by body's own position delta, then rotate about the origin by
+    // body's own rotation" — every subsequent transform this part applies (its own authored
+    // position/rotation keyframes, written directly onto its ModelPart fields exactly as
+    // before) plays out INSIDE this already-shifted-and-rotated frame, so the part's pivot
+    // gets carried through space by body's rotation the same way a true parent-child bone
+    // hierarchy would, instead of only reacting to its own independently-authored keyframes.
+    //
+    // Declared before somnium$applyLookPitch so it acts as the outermost wrap if a part ever
+    // needed both (it doesn't today — transformation animations don't use
+    // changeDirectionOnLook, see CastAnimationOptions#propagateBodyTransform's javadoc — but
+    // this ordering is the more correct one if that ever changes: the "which parent frame
+    // am I in" wrap should sit outside a "which way am I personally aiming" tilt).
+    @Inject(
+            method = "render(Lcom/mojang/blaze3d/vertex/PoseStack;Lcom/mojang/blaze3d/vertex/VertexConsumer;IIFFFF)V",
+            at = @At(
+                    value = "INVOKE",
+                    target = "Lnet/minecraft/client/model/geom/ModelPart;translateAndRotate(Lcom/mojang/blaze3d/vertex/PoseStack;)V",
+                    shift = At.Shift.BEFORE
+            )
+    )
+    private void somnium$applyBodyRotationCompound(
+            PoseStack poseStack,
+            VertexConsumer vertexConsumer,
+            int packedLight,
+            int packedOverlay,
+            float red, float green, float blue, float alpha,
+            CallbackInfo ci) {
+
+        float[] compound = SomniumBoneScaleMap.getBodyRotationCompound((ModelPart) (Object) this);
+        if (compound == null) return;
+
+        float rotXRad = compound[0];
+        float dx = compound[1], dy = compound[2], dz = compound[3];
+
+        // Body's rest pivot is (0,0,0) (SomniumBoneAnchors), so there's no separate
+        // translate-to-pivot / translate-back pair needed here — unlike the look-pitch wrap
+        // below, which pivots about a nonzero joint. Order matters: translate first (an outer
+        // shift by body's own position delta), then rotate about the origin, so the rotation
+        // still happens about body's true rest position rather than the already-shifted point.
+        if (dx != 0f || dy != 0f || dz != 0f) {
+            poseStack.translate(dx, dy, dz);
+        }
+        if (rotXRad != 0f) {
+            poseStack.mulPose(Axis.XP.rotation(rotXRad));
+        }
+    }
+
     // ── changeDirectionOnLook: pre-tilt the frame about the bone's pivot, BEFORE the bone's
     // own translateAndRotate runs ──
     //

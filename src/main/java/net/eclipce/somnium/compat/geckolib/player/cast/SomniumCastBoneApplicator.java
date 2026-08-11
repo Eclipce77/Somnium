@@ -483,7 +483,27 @@ public final class SomniumCastBoneApplicator {
                 }
                 GeoBone gb = opt.get();
 
-                float vXRot = -gb.getRotX(), vYRot = -gb.getRotY(), vZRot = -gb.getRotZ();
+                // ── Rotation sign convention: DELIBERATELY DIFFERENT from applyBoneIfPresent ──
+                //
+                // applyBoneIfPresent negates all three rotation axes (part.xRot -= rx, etc.)
+                // when writing DIRECTLY to a single bone's ModelPart field — proven correct
+                // for every independently-applied bone, Pistol through Rocket.
+                //
+                // That convention does NOT carry over to composing multiple bones' rotations
+                // via quaternion multiplication before decomposition. Verified empirically
+                // (not just derived): an exhaustive search across all 8 rotation-axis sign
+                // combinations against real runtime diagnostic output (gear_second_loop,
+                // every compoundable bone) found an exact match — to 3+ decimal places, on
+                // every bone and every axis except one residual component — at (+rx, +ry, -rz),
+                // not (-rx, -ry, -rz). The likely reason: the vanilla player renderer's
+                // scale(-1, -1, 1) mirror flips rotation about X and Y but leaves rotation
+                // about Z unchanged (two flips cancel) — applyBoneIfPresent's per-bone
+                // negation already compensates for that mirror once per bone independently,
+                // but composing several already-compensated rotations together doesn't equal
+                // compensating once after composing them in real (un-mirrored) space, except
+                // on the axis where the double-compensation cancels out (Z). Composing in
+                // real space (no negation on X/Y, single negation on Z) is what matches.
+                float vXRot = gb.getRotX(), vYRot = gb.getRotY(), vZRot = -gb.getRotZ();
                 Quaternionf ownRot = new Quaternionf().rotationZYX(vZRot, vYRot, vXRot);
                 Vector3f ownDelta = new Vector3f(-gb.getPosX(), -gb.getPosY(), gb.getPosZ());
                 Vector3f restPivot = restPivotPixels(currentBone);

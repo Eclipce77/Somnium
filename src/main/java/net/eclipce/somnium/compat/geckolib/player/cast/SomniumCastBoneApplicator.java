@@ -459,12 +459,19 @@ public final class SomniumCastBoneApplicator {
      *         transform code — it has no idea it might be feeding a vanilla player model,
      *         which is rendered through an extra {@code scale(-1, -1, 1)} mirror that
      *         {@link #applyBoneIfPresent}'s proven sign conventions already account for.
-     *         Calling {@code RenderUtils} verbatim without establishing that same mirror
-     *         first produces a result mirrored on X/Y relative to what vanilla expects.
-     *         Fixed by scaling the scratch PoseStack by {@code (-1,-1,1)} before the walk
-     *         starts, so every subsequent {@code RenderUtils} call already operates inside
-     *         the correct frame — establishing the frame once, rather than patching the
-     *         output after, so it composes correctly through however many ancestors deep.</li>
+     *         Calling {@code RenderUtils} verbatim without this produces a result mirrored
+     *         on X/Y relative to what vanilla expects — but it has to be a full
+     *         conjugation (mirror the frame, do the real work, un-mirror), not just a
+     *         one-sided scale before the walk starts. Position comes out identical either
+     *         way (a translation under a left-multiplied mirror is just the mirrored
+     *         vector, prepend-only is fine), but rotation is not: two rotations generally
+     *         don't commute with the mirror, only pure-Z ones do, so mirroring just the
+     *         input changes WHICH rotation gets extracted, not merely its sign. Confirmed
+     *         both the bug and the fix against a single-bone case (body only, checked
+     *         against {@link #applyBoneIfPresent}'s known-correct output) before this was
+     *         applied to the full multi-bone walk: prepend-only silently flipped the sign,
+     *         scaling by {@code (-1,-1,1)} again after the loop closes the conjugation and
+     *         matches exactly.</li>
      *     <li><b>Pivot values are geo-model-absolute, not parent-relative.</b> Bedrock-format
      *         pivots (what {@code bone.getPivotX/Y/Z} return) are absolute coordinates in
      *         GeckoLib's own geometry space — e.g. body and head both sit at {@code [0,24,0]}
@@ -541,6 +548,17 @@ public final class SomniumCastBoneApplicator {
                 prevPivotY = b.getPivotY();
                 prevPivotZ = b.getPivotZ();
             }
+            // Close the conjugation: scale(-1,-1,1) is its own inverse, so applying it again
+            // here completes "mirror, do the real work, un-mirror" rather than leaving the
+            // walk permanently inside a mirrored frame. Skipping this step is what produced
+            // the "upside down" rotation in testing — mirroring only the input side changes
+            // WHICH rotation gets extracted, not just its sign, because rotations don't
+            // commute with the mirror in general (only pure-Z rotations do). Position is
+            // unaffected by this distinction — the translation column comes out identical
+            // either way — so this being missing was a rotation-only bug, confirmed by
+            // checking a single-bone case against applyBoneIfPresent's known-correct answer
+            // before shipping this fix.
+            scratch.scale(-1f, -1f, 1f);
 
             Matrix4f finalPose = scratch.last().pose();
             Vector3f worldPos = finalPose.getTranslation(new Vector3f());
@@ -548,9 +566,19 @@ public final class SomniumCastBoneApplicator {
             Vector3f euler = new Vector3f();
             worldRot.getEulerAnglesZYX(euler);
 
-            part.x = worldPos.x() * 16f;
-            part.y = worldPos.y() * 16f;
-            part.z = worldPos.z() * 16f;
+            // The walk above computes a DELTA from rest (verified: feeding it all-zero
+            // rotation/position input produces exactly (0,0,0) — confirmed numerically before
+            // this was written, not assumed). That delta needs to land on top of this specific
+            // bone's actual vanilla rest position, not at the origin — SomniumBoneAnchors is
+            // the same table changeDirectionOnLook already trusts for exactly this reason.
+            // Missing this previously meant every compounded arm/leg rendered bunched up near
+            // (0,0,0) instead of out at the shoulder/hip — head happened to look unaffected by
+            // this specific bug only because its own rest pivot is (0,0,0), so adding it was a
+            // no-op there, which is exactly why this went unnoticed until arms/legs were checked.
+            float[] restPx = SomniumBoneAnchors.restPivot(boneName);
+            part.x = restPx[0] * 16f + worldPos.x() * 16f;
+            part.y = restPx[1] * 16f + worldPos.y() * 16f;
+            part.z = restPx[2] * 16f + worldPos.z() * 16f;
             part.xRot = euler.x();
             part.yRot = euler.y();
             part.zRot = euler.z();

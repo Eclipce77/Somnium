@@ -483,27 +483,27 @@ public final class SomniumCastBoneApplicator {
                 }
                 GeoBone gb = opt.get();
 
-                // ── Rotation sign convention: DELIBERATELY DIFFERENT from applyBoneIfPresent ──
+                // ── Rotation sign convention ──
                 //
-                // applyBoneIfPresent negates all three rotation axes (part.xRot -= rx, etc.)
-                // when writing DIRECTLY to a single bone's ModelPart field — proven correct
-                // for every independently-applied bone, Pistol through Rocket.
+                // Reuses applyBoneIfPresent's exact convention: negate all three axes.
                 //
-                // That convention does NOT carry over to composing multiple bones' rotations
-                // via quaternion multiplication before decomposition. Verified empirically
-                // (not just derived): an exhaustive search across all 8 rotation-axis sign
-                // combinations against real runtime diagnostic output (gear_second_loop,
-                // every compoundable bone) found an exact match — to 3+ decimal places, on
-                // every bone and every axis except one residual component — at (+rx, +ry, -rz),
-                // not (-rx, -ry, -rz). The likely reason: the vanilla player renderer's
-                // scale(-1, -1, 1) mirror flips rotation about X and Y but leaves rotation
-                // about Z unchanged (two flips cancel) — applyBoneIfPresent's per-bone
-                // negation already compensates for that mirror once per bone independently,
-                // but composing several already-compensated rotations together doesn't equal
-                // compensating once after composing them in real (un-mirrored) space, except
-                // on the axis where the double-compensation cancels out (Z). Composing in
-                // real space (no negation on X/Y, single negation on Z) is what matches.
-                float vXRot = gb.getRotX(), vYRot = gb.getRotY(), vZRot = -gb.getRotZ();
+                // CORRECTION (this was wrong for one iteration and got reverted): a previous
+                // version of this method used (+rotX, +rotY, -rotZ) instead, based on an
+                // exhaustive search that matched real runtime diagnostic output. That search
+                // was valid but its conclusion was wrong, because the Python model it was
+                // validated against assumed gb.getRotX()/getRotY() directly equal the raw
+                // .animation.json degree values. They don't: GeckoLib's own JSON loader
+                // (BakedAnimationsAdapter#buildKeyframeStack) already negates X and Y — not Z —
+                // when parsing rotation keyframes (Math.toRadians(-rawXValue.get()) for X/Y,
+                // Math.toRadians(rawZValue.get()) for Z, confirmed directly from GeckoLib
+                // source). applyBoneIfPresent's -gb.getRotX() therefore already evaluates to
+                // +radians(rawX) — i.e. it was already correct, and undoing that negation here
+                // (as the previous version did) cancelled out GeckoLib's own negation instead
+                // of compounding with it, silently flipping X and Y for every compounded bone.
+                // The apparent match against logged output was real but came from comparing
+                // against a formula (-gb.getRotX()) that was itself already correct, not from
+                // finding a genuinely different, better one.
+                float vXRot = -gb.getRotX(), vYRot = -gb.getRotY(), vZRot = -gb.getRotZ();
                 Quaternionf ownRot = new Quaternionf().rotationZYX(vZRot, vYRot, vXRot);
                 Vector3f ownDelta = new Vector3f(-gb.getPosX(), -gb.getPosY(), gb.getPosZ());
                 Vector3f restPivot = restPivotPixels(currentBone);

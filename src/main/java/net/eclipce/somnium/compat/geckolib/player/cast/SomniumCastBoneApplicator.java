@@ -451,6 +451,41 @@ public final class SomniumCastBoneApplicator {
      * locomotion contribution before {@link #applyAllBones} ran. If a future animation stops
      * suppressing one of these parts, this method would need to preserve that vanilla
      * contribution instead of overwriting it.
+     *
+     * <h3>Two corrections on top of calling GeckoLib's code (found via direct numeric
+     * verification against this exact rig, not guessed)</h3>
+     * <ol>
+     *     <li><b>The vanilla player mirror.</b> {@code RenderUtils} is GeckoLib's generic
+     *         transform code — it has no idea it might be feeding a vanilla player model,
+     *         which is rendered through an extra {@code scale(-1, -1, 1)} mirror that
+     *         {@link #applyBoneIfPresent}'s proven sign conventions already account for.
+     *         Calling {@code RenderUtils} verbatim without establishing that same mirror
+     *         first produces a result mirrored on X/Y relative to what vanilla expects.
+     *         Fixed by scaling the scratch PoseStack by {@code (-1,-1,1)} before the walk
+     *         starts, so every subsequent {@code RenderUtils} call already operates inside
+     *         the correct frame — establishing the frame once, rather than patching the
+     *         output after, so it composes correctly through however many ancestors deep.</li>
+     *     <li><b>Pivot values are geo-model-absolute, not parent-relative.</b> Bedrock-format
+     *         pivots (what {@code bone.getPivotX/Y/Z} return) are absolute coordinates in
+     *         GeckoLib's own geometry space — e.g. body and head both sit at {@code [0,24,0]}
+     *         in {@code default_player.geo.json}, matching Blockbench's own numbers exactly.
+     *         Vanilla's {@code ModelPart} fields use a completely different origin (body and
+     *         head both rest at {@code 0}), and {@link #applyBoneIfPresent} never references
+     *         a bone's pivot for position at all — only its animated delta. Feeding
+     *         {@code RenderUtils.translateToPivotPoint} a bone's raw absolute pivot (as
+     *         {@code prepMatrixForBone} does internally) uses a 24-unit lever arm for a
+     *         rotation that should have none, which is exactly what direct numeric testing
+     *         against this data showed: a plausible few-pixel result for right_arm (pivot
+     *         meaningfully different from body's) alongside a wildly exaggerated 20+ pixel
+     *         swing for head specifically (pivot identical to body's) — confirmed as the
+     *         cause of the "head flying into the sky" screenshot. Fixed by not calling
+     *         {@code prepMatrixForBone} as one unit; the pivot translate/detranslate pair is
+     *         done by hand with the root bone's pivot treated as {@code (0,0,0)} and every
+     *         other bone's pivot expressed relative to its immediate parent's, while
+     *         {@code translateMatrixToBone}/{@code rotateMatrixAroundBone}/
+     *         {@code scaleMatrixForBone} — the parts that read animated keyframe data, not
+     *         static geometry — are still called from {@code RenderUtils} verbatim.</li>
+     * </ol>
      */
     private static void applyBoneHierarchyCompound(BakedGeoModel bakedModel,
                                                    PlayerModel<?> playerModel,
@@ -478,11 +513,33 @@ public final class SomniumCastBoneApplicator {
             if (chainBroken) continue;
             java.util.Collections.reverse(chain);
 
-            // The actual walk: GeckoLib's own per-bone transform, called once per ancestor,
-            // all accumulating on the same never-rendered PoseStack.
+            // The walk: GeckoLib's own per-bone animated transform, called once per ancestor —
+            // but with the pivot translate/detranslate pair done by hand (root -> (0,0,0),
+            // everyone else -> relative to their immediate parent) instead of calling
+            // prepMatrixForBone as one unit. See this method's javadoc for why.
             PoseStack scratch = new PoseStack();
-            for (GeoBone b : chain) {
-                RenderUtils.prepMatrixForBone(scratch, b);
+            scratch.scale(-1f, -1f, 1f); // establish the vanilla player mirror before anything else
+            float prevPivotX = 0, prevPivotY = 0, prevPivotZ = 0;
+            for (int i = 0; i < chain.size(); i++) {
+                GeoBone b = chain.get(i);
+                float pivotX, pivotY, pivotZ;
+                if (i == 0) {
+                    pivotX = 0; pivotY = 0; pivotZ = 0;
+                } else {
+                    pivotX = b.getPivotX() - prevPivotX;
+                    pivotY = b.getPivotY() - prevPivotY;
+                    pivotZ = b.getPivotZ() - prevPivotZ;
+                }
+
+                RenderUtils.translateMatrixToBone(scratch, b);
+                scratch.translate(pivotX / 16f, pivotY / 16f, pivotZ / 16f);
+                RenderUtils.rotateMatrixAroundBone(scratch, b);
+                RenderUtils.scaleMatrixForBone(scratch, b);
+                scratch.translate(-pivotX / 16f, -pivotY / 16f, -pivotZ / 16f);
+
+                prevPivotX = b.getPivotX();
+                prevPivotY = b.getPivotY();
+                prevPivotZ = b.getPivotZ();
             }
 
             Matrix4f finalPose = scratch.last().pose();

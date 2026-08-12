@@ -1,15 +1,18 @@
 package net.eclipce.somnium.compat.geckolib.player.cast;
 
+import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.logging.LogUtils;
 import net.minecraft.client.model.PlayerModel;
 import net.minecraft.client.model.geom.ModelPart;
 import net.minecraft.world.entity.player.Player;
+import org.joml.Matrix4f;
 import org.joml.Quaternionf;
 import org.joml.Vector3f;
 import org.slf4j.Logger;
 import software.bernie.geckolib.cache.object.BakedGeoModel;
 import software.bernie.geckolib.cache.object.GeoBone;
 import software.bernie.geckolib.core.animation.AnimationState;
+import software.bernie.geckolib.util.RenderUtils;
 import net.eclipce.somnium.compat.geckolib.mixin.PlayerModelSetupMixin;
 
 import java.util.List;
@@ -297,8 +300,8 @@ public final class SomniumCastBoneApplicator {
         java.util.Set<String> animatedBones = new java.util.HashSet<>();
         applyAllBones(bakedModel, playerModel, animatedBones);
 
-        // Opt-in only — no-ops unless this animation's options reference a BoneHierarchy.
-        // See applyBoneHierarchyCompound's javadoc and CastAnimationOptions#boneHierarchy.
+        // Opt-in only — no-ops unless this animation's options request it.
+        // See applyBoneHierarchyCompound's javadoc and CastAnimationOptions#compoundBoneHierarchy.
         applyBoneHierarchyCompound(bakedModel, playerModel, options);
 
         // ── changeDirectionOnLook ──
@@ -383,153 +386,114 @@ public final class SomniumCastBoneApplicator {
     /** The only bones {@link #applyAllBones} ever writes to — the sole candidates for
      *  hierarchy compounding. Overlay layers (hat, jacket, sleeves, pants) never carry their
      *  own animation channels (see {@link #applyAllBones}'s javadoc) and always inherit their
-     *  base part's final transform via {@link #syncLayersFromBaseParts}, so even though a
-     *  {@link BoneHierarchy} file may list them (matching a full Blockbench rig for clarity),
-     *  they're never looked up individually here — there'd be nothing bone-specific to read. */
+     *  base part's final transform via {@link #syncLayersFromBaseParts}, so they're never
+     *  looked up individually here — there'd be nothing bone-specific to read. */
     private static final String[] COMPOUNDABLE_BONES =
             { "head", "right_arm", "left_arm", "right_leg", "left_leg" };
     // "body" is deliberately absent: under any hierarchy a content author would plausibly
-    // write, body is the root (chainToRoot("body") is length 1, itself only) — its own
-    // rotation/position is already exactly what applyBoneIfPresent wrote moments ago, so
-    // walking it through this method would recompute the identical result. Skipping it is a
-    // micro-optimisation, not a correctness requirement — the general walk below would give
-    // the same answer either way for any bone whose chain has length 1.
+    // build, body is the root (getParent() returns null) — its own rotation/position is
+    // already exactly what applyBoneIfPresent wrote moments ago, so walking it here would
+    // recompute the identical result.
 
     /**
-     * Compounds each carried bone's rotation and position through its full ancestor chain —
-     * however many levels a {@link BoneHierarchy} defines — the way a real parent-child
-     * skeleton would carry its children. No-ops entirely unless
-     * {@code options.boneHierarchy()} resolves to an actual loaded hierarchy.
+     * Compounds each carried bone's rotation and position through its full ancestor chain,
+     * exactly the way GeckoLib's own renderer would, by calling GeckoLib's own per-bone
+     * transform method on a scratch, never-rendered {@link PoseStack}. No-ops entirely unless
+     * {@code options.compoundBoneHierarchy()} is set.
      *
-     * <h3>Why quaternion composition, not a scalar rotation add</h3>
-     * Earlier versions of this fix tried a render-time PoseStack wrap and, before that, a
-     * flat scalar position add. Neither produced a visible change worth the complexity, for
-     * the same underlying reason: at a large parent rotation (Gear Second's body peaks
-     * around 45°), the dominant visual effect isn't a small offset, it's each descendant's
-     * REST PIVOT sweeping through a wide arc as it orbits its ancestors' pivots — confirmed
-     * against the reference Blockbench render (a deep crouch, torso folding down near the
-     * legs), which a flat position add can't produce at all. Getting this right needs the
-     * same math GeckoLib's own renderer uses to walk a real hierarchy:
-     * {@code RenderUtils.rotateMatrixAroundBone} composes a bone's Z, then Y, then X rotation
-     * in sequence (matching JOML's {@code rotationZYX} convention exactly), and a multi-level
-     * chain is just that composition applied once per ancestor, root to leaf.
+     * <h3>Why call GeckoLib's own code instead of reimplementing the math</h3>
+     * Earlier versions of this fix hand-derived the composition — first a render-time
+     * PoseStack wrap, then a flat position add, then a hand-rolled quaternion walk reusing
+     * {@link SomniumBoneAnchors} rest pivots and a manually chosen rotation order. All three
+     * were extensively cross-checked against JOML's and GeckoLib's own source and were
+     * internally self-consistent, but "internally consistent" isn't the same guarantee as
+     * "matches Blockbench's own preview" — that guarantee only comes from running the actual
+     * code Blockbench-authored content is designed against. GeckoLib's {@code GeoRenderer}
+     * already does exactly this walk for real hierarchical models: {@code renderRecursively}
+     * calls {@link RenderUtils#prepMatrixForBone} once per bone, and a child bone's call
+     * happens inside the PoseStack frame its parent's call already established. Calling that
+     * same method, in that same order, on a scratch PoseStack we never actually render with,
+     * reproduces GeckoLib's real hierarchical transform exactly — no hand-derived rotation
+     * order, sign convention, or pivot math of our own left to get subtly wrong.
      *
-     * <h3>The walk, in order (root to leaf)</h3>
-     * For a bone whose {@link BoneHierarchy#chainToRoot} is, say, {@code [right_arm, body]}
-     * (leaf first — reversed to {@code [body, right_arm]} to walk root-first):
-     * <ol>
-     *     <li>Start at the root: world pivot = root's rest pivot + root's own (vanilla-
-     *         converted) position delta. Accumulated rotation = root's own rotation.</li>
-     *     <li>For each next bone in the chain: the offset from the previous bone's rest
-     *         pivot, and this bone's own position delta, both get rotated by the
-     *         accumulated rotation SO FAR (i.e. by every ancestor above this bone, not
-     *         including this bone's own rotation yet — matching {@code RenderUtils}'
-     *         translate-then-rotate order within each bone's own local step) before being
-     *         added to the running world pivot. The accumulated rotation is then composed
-     *         with this bone's own rotation, becoming the basis for the NEXT bone in the
-     *         chain (or the final answer, if this was the last one).</li>
-     * </ol>
-     * A bone with no ancestors (chain length 1 — a root under this hierarchy) is left
-     * untouched: {@link #applyBoneIfPresent} already wrote the correct answer for it.
+     * <h3>What this requires</h3>
+     * The baked model's bones need real {@code parent}/{@code childBones} relationships —
+     * i.e. the {@code .geo.json} actually has {@code "parent": "body"} on head/arms/legs,
+     * matching the Blockbench rig, rather than Somnium's original flat sibling layout. See
+     * {@code default_player.geo.json}. This does NOT change vanilla rendering at all — the
+     * vanilla {@link PlayerModel} stays exactly as flat as ever; only {@code GeoBone.getParent}
+     * (read here, and only here) depends on the reparenting.
      *
-     * <h3>Coordinate conversion</h3>
-     * Reuses {@link #applyBoneIfPresent}'s already-proven sign conversion (negate all three
-     * rotation axes; negate X/Y position, keep Z) for every bone in every chain, since that
-     * conversion is empirically validated against every existing Gomu clip and isn't
-     * re-derived here. {@link SomniumBoneAnchors#restPivot} gives rest pivots in vanilla
-     * block units; this method works in pixel units throughout (matching
-     * {@code ModelPart.x/y/z} and {@code GeoBone}'s own position getters directly) and only
-     * converts a rest pivot at the point it's read.
+     * <h3>The walk</h3>
+     * For a bone whose ancestry is {@code [right_arm, body]} (leaf first): walk root to leaf
+     * (reverse order), calling {@code RenderUtils.prepMatrixForBone(scratch, bone)} once per
+     * ancestor on the SAME scratch PoseStack, so each subsequent call composes inside the
+     * previous one's frame — identical to how {@code renderRecursively} nests real child
+     * bones inside their parent's already-transformed PoseStack. After the walk, the
+     * PoseStack's accumulated pose IS the bone's fully-compounded transform. A bone with no
+     * parent (chain length 1) is left untouched — {@link #applyBoneIfPresent} already wrote
+     * the correct answer for it.
      *
-     * <h3>What this deliberately does NOT do</h3>
-     * Scale isn't compounded (no current clip needs a scaled ancestor). If any bone in a
-     * chain is missing from the baked model or hidden, that whole bone is skipped —
-     * {@link #applyBoneIfPresent}'s own-bone-only result is left in place for it rather than
-     * risking a partially-computed chain.
+     * <h3>Extracting the result</h3>
+     * {@code prepMatrixForBone} also applies the bone's own animated SCALE (between rotate
+     * and translate-away-from-pivot) — for free, this makes scale compound correctly too,
+     * without this method needing to handle it separately. That means the accumulated
+     * {@link Matrix4f} isn't a pure rigid transform, so translation and rotation are pulled
+     * out with {@code getTranslation}/{@code getNormalizedRotation} (which is robust to a
+     * scaled matrix) rather than reading matrix columns directly. GeckoLib's own translate
+     * calls all divide by 16 (blocks, not the pixel units {@code ModelPart.x/y/z} use), so
+     * the extracted translation is multiplied back by 16 before being written.
      *
      * <h3>A latent assumption worth knowing about</h3>
      * This overwrites (not adds to) each carried part's rotation and position with the
      * fully-composed result. That's correct as long as {@code suppressVanillaAnimOn} covers
      * every bone this method touches, because {@code resetPose()} already zeroed the vanilla
      * locomotion contribution before {@link #applyAllBones} ran. If a future animation stops
-     * suppressing one of these parts (to let vanilla walk-swing show through), this method
-     * would need to preserve that vanilla contribution instead of overwriting it.
+     * suppressing one of these parts, this method would need to preserve that vanilla
+     * contribution instead of overwriting it.
      */
     private static void applyBoneHierarchyCompound(BakedGeoModel bakedModel,
                                                    PlayerModel<?> playerModel,
                                                    CastAnimationOptions options) {
-        BoneHierarchy hierarchy = BoneHierarchyRegistry.get(options.boneHierarchy());
-        if (hierarchy == null || hierarchy.isFlat()) return;
+        if (!options.compoundBoneHierarchy()) return;
 
         for (String boneName : COMPOUNDABLE_BONES) {
-            List<String> leafToRoot = hierarchy.chainToRoot(boneName);
-            if (leafToRoot.size() <= 1) continue; // this bone is its own root — nothing to compound
+            Optional<GeoBone> opt = bakedModel.getBone(boneName);
+            if (opt.isEmpty() || opt.get().isHidden()) continue;
+            GeoBone bone = opt.get();
+            if (bone.getParent() == null) continue; // root under this geo model — nothing to compound
 
             ModelPart part = SomniumPlayerBoneMap.getPart(playerModel, boneName);
             if (part == null) continue;
 
-            Vector3f worldPivot = null;
-            Quaternionf accumRot = null;
-            String prevBone = null;
+            // Collect the chain leaf-first by walking getParent(), then reverse to root-first.
+            List<GeoBone> chain = new java.util.ArrayList<>();
+            GeoBone cur = bone;
             boolean chainBroken = false;
+            while (cur != null) {
+                if (cur.isHidden()) { chainBroken = true; break; }
+                chain.add(cur);
+                cur = cur.getParent();
+            }
+            if (chainBroken) continue;
+            java.util.Collections.reverse(chain);
 
-            // Walk root -> leaf (reverse of chainToRoot's leaf-first order).
-            for (int i = leafToRoot.size() - 1; i >= 0; i--) {
-                String currentBone = leafToRoot.get(i);
-                Optional<GeoBone> opt = bakedModel.getBone(currentBone);
-                if (opt.isEmpty() || opt.get().isHidden()) {
-                    chainBroken = true;
-                    break;
-                }
-                GeoBone gb = opt.get();
-
-                // ── Rotation sign convention ──
-                //
-                // Reuses applyBoneIfPresent's exact convention: negate all three axes.
-                //
-                // CORRECTION (this was wrong for one iteration and got reverted): a previous
-                // version of this method used (+rotX, +rotY, -rotZ) instead, based on an
-                // exhaustive search that matched real runtime diagnostic output. That search
-                // was valid but its conclusion was wrong, because the Python model it was
-                // validated against assumed gb.getRotX()/getRotY() directly equal the raw
-                // .animation.json degree values. They don't: GeckoLib's own JSON loader
-                // (BakedAnimationsAdapter#buildKeyframeStack) already negates X and Y — not Z —
-                // when parsing rotation keyframes (Math.toRadians(-rawXValue.get()) for X/Y,
-                // Math.toRadians(rawZValue.get()) for Z, confirmed directly from GeckoLib
-                // source). applyBoneIfPresent's -gb.getRotX() therefore already evaluates to
-                // +radians(rawX) — i.e. it was already correct, and undoing that negation here
-                // (as the previous version did) cancelled out GeckoLib's own negation instead
-                // of compounding with it, silently flipping X and Y for every compounded bone.
-                // The apparent match against logged output was real but came from comparing
-                // against a formula (-gb.getRotX()) that was itself already correct, not from
-                // finding a genuinely different, better one.
-                float vXRot = -gb.getRotX(), vYRot = -gb.getRotY(), vZRot = -gb.getRotZ();
-                Quaternionf ownRot = new Quaternionf().rotationZYX(vZRot, vYRot, vXRot);
-                Vector3f ownDelta = new Vector3f(-gb.getPosX(), -gb.getPosY(), gb.getPosZ());
-                Vector3f restPivot = restPivotPixels(currentBone);
-
-                if (worldPivot == null) {
-                    // Root of this chain.
-                    worldPivot = new Vector3f(restPivot).add(ownDelta);
-                    accumRot = ownRot;
-                } else {
-                    Vector3f offsetFromPrevRest = new Vector3f(restPivot).sub(restPivotPixels(prevBone));
-                    Vector3f rotatedOffset = accumRot.transform(new Vector3f(offsetFromPrevRest));
-                    Vector3f rotatedOwnDelta = accumRot.transform(new Vector3f(ownDelta));
-                    worldPivot.add(rotatedOffset).add(rotatedOwnDelta);
-                    accumRot.mul(ownRot); // compose for the next level down (or the final answer)
-                }
-                prevBone = currentBone;
+            // The actual walk: GeckoLib's own per-bone transform, called once per ancestor,
+            // all accumulating on the same never-rendered PoseStack.
+            PoseStack scratch = new PoseStack();
+            for (GeoBone b : chain) {
+                RenderUtils.prepMatrixForBone(scratch, b);
             }
 
-            if (chainBroken || worldPivot == null) continue;
-
-            part.x = worldPivot.x();
-            part.y = worldPivot.y();
-            part.z = worldPivot.z();
-
+            Matrix4f finalPose = scratch.last().pose();
+            Vector3f worldPos = finalPose.getTranslation(new Vector3f());
+            Quaternionf worldRot = finalPose.getNormalizedRotation(new Quaternionf());
             Vector3f euler = new Vector3f();
-            accumRot.getEulerAnglesZYX(euler);
+            worldRot.getEulerAnglesZYX(euler);
+
+            part.x = worldPos.x() * 16f;
+            part.y = worldPos.y() * 16f;
+            part.z = worldPos.z() * 16f;
             part.xRot = euler.x();
             part.yRot = euler.y();
             part.zRot = euler.z();
@@ -537,19 +501,13 @@ public final class SomniumCastBoneApplicator {
             // ── Diagnostic (temporary — remove once confirmed working) ──
             if (probedAnim != null && probedAnim.contains("gear_second")) {
                 System.out.println("[Somnium-DIAG] applyBoneHierarchyCompound: anim=" + probedAnim
-                        + " bone=" + boneName + " chain=" + leafToRoot
-                        + " finalPos=(" + worldPivot.x() + ", " + worldPivot.y() + ", " + worldPivot.z() + ")"
-                        + " finalRotDeg=(" + Math.toDegrees(euler.x()) + ", "
-                        + Math.toDegrees(euler.y()) + ", " + Math.toDegrees(euler.z()) + ")");
+                        + " bone=" + boneName
+                        + " chain=" + chain.stream().map(GeoBone::getName).toList()
+                        + " finalPos=(" + part.x + ", " + part.y + ", " + part.z + ")"
+                        + " finalRotDeg=(" + Math.toDegrees(part.xRot) + ", "
+                        + Math.toDegrees(part.yRot) + ", " + Math.toDegrees(part.zRot) + ")");
             }
         }
-    }
-
-    /** {@link SomniumBoneAnchors#restPivot} converted from vanilla block units to the pixel
-     *  units {@code ModelPart.x/y/z} and {@code GeoBone}'s position getters both use. */
-    private static Vector3f restPivotPixels(String boneName) {
-        float[] p = SomniumBoneAnchors.restPivot(boneName);
-        return new Vector3f(p[0] * 16f, p[1] * 16f, p[2] * 16f);
     }
 
     /**

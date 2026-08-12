@@ -1,9 +1,7 @@
 package net.eclipce.somnium.compat.geckolib.player.cast;
 
 import net.minecraft.network.FriendlyByteBuf;
-import net.minecraft.resources.ResourceLocation;
 
-import javax.annotation.Nullable;
 import java.util.Collections;
 import java.util.EnumSet;
 import java.util.Set;
@@ -65,20 +63,24 @@ public final class CastAnimationOptions {
      */
     private final int startOffsetTicks;
     /**
-     * When non-null, keys a {@link BoneHierarchy} (see {@link BoneHierarchyRegistry}) that
-     * describes how this animation's bones are parented to each other for compounding
-     * purposes — an outer bone's rotation and position carry its children with it, the way
-     * a real parent-child skeleton would, before the result is written onto the (still flat,
-     * unparented) vanilla {@code ModelPart}s. Null means no compounding at all: every bone
-     * reacts only to its own keyframes, exactly Somnium's original behavior.
+     * When {@code true}, every carried bone's rotation and position is compounded through
+     * its full ancestor chain in the baked model — a parent's rotation and position carry
+     * its children with it, the way a real parent-child skeleton would — before the result
+     * is written onto the (still flat, unparented) vanilla {@code ModelPart}s. This is done
+     * by calling GeckoLib's own {@code RenderUtils.prepMatrixForBone} on a scratch PoseStack
+     * (see {@code SomniumCastBoneApplicator#applyBoneHierarchyCompound}), so it requires the
+     * baked model's bones to actually have real {@code parent} relationships in their
+     * {@code .geo.json} — see {@code default_player.geo.json}. {@code false} (the default)
+     * means no compounding at all: every bone reacts only to its own keyframes, exactly
+     * Somnium's original behavior.
      *
      * <p>This is opt-in per animation for one reason: most existing cast abilities were
      * authored and screenshot-tuned against the flat, non-compounding behavior — a modest
      * body rotation reads fine on its own without carrying the limbs. Large whole-body
-     * transformation animations are the case that actually needs a hierarchy; setting this
-     * only changes behavior for animations that explicitly reference one.</p>
+     * transformation animations are the case that actually needs it; setting this only
+     * changes behavior for animations that explicitly request it.</p>
      */
-    private final ResourceLocation boneHierarchy;
+    private final boolean compoundBoneHierarchy;
 
     private CastAnimationOptions(Set<CastBodyPart> suppressVanillaAnimOn,
                                  boolean           onExecuteBodyAlign,
@@ -90,7 +92,7 @@ public final class CastAnimationOptions {
                                  int     animationLengthTicks,
                                  float   capturedLookPitch,
                                  int     startOffsetTicks,
-                                 ResourceLocation boneHierarchy) {
+                                 boolean compoundBoneHierarchy) {
         this.suppressVanillaAnimOn  = suppressVanillaAnimOn;
         this.onExecuteBodyAlign     = onExecuteBodyAlign;
         this.changeDirectionOnLook  = changeDirectionOnLook;
@@ -101,7 +103,7 @@ public final class CastAnimationOptions {
         this.animationLengthTicks  = animationLengthTicks;
         this.capturedLookPitch      = capturedLookPitch;
         this.startOffsetTicks       = startOffsetTicks;
-        this.boneHierarchy          = boneHierarchy;
+        this.compoundBoneHierarchy  = compoundBoneHierarchy;
     }
 
     /**
@@ -124,7 +126,7 @@ public final class CastAnimationOptions {
                 animationLengthTicks,
                 pitchDegrees,
                 startOffsetTicks,
-                boneHierarchy);
+                compoundBoneHierarchy);
     }
 
     // ─── Accessors ─────────────────────────────────────────────────────────────
@@ -198,11 +200,11 @@ public final class CastAnimationOptions {
     public int startOffsetTicks() { return startOffsetTicks; }
 
     /**
-     * @return the {@link BoneHierarchy} key this animation compounds through, or
-     *         {@code null} for no compounding. See the field javadoc for the full rationale.
+     * @return {@code true} if this animation compounds bone rotation/position through the
+     *         baked model's real parent hierarchy. See the field javadoc for the full
+     *         rationale.
      */
-    @Nullable
-    public ResourceLocation boneHierarchy() { return boneHierarchy; }
+    public boolean compoundBoneHierarchy() { return compoundBoneHierarchy; }
 
     public static Builder builder() { return new Builder(); }
 
@@ -236,7 +238,7 @@ public final class CastAnimationOptions {
                 buf.readVarInt(),
                 buf.readFloat(),
                 buf.readVarInt(),
-                buf.readBoolean() ? buf.readResourceLocation() : null);
+                buf.readBoolean());
     }
 
     /**
@@ -255,10 +257,7 @@ public final class CastAnimationOptions {
         buf.writeVarInt(animationLengthTicks);
         buf.writeFloat(capturedLookPitch);
         buf.writeVarInt(startOffsetTicks);
-        buf.writeBoolean(boneHierarchy != null);
-        if (boneHierarchy != null) {
-            buf.writeResourceLocation(boneHierarchy);
-        }
+        buf.writeBoolean(compoundBoneHierarchy);
     }
 
     /**
@@ -305,7 +304,7 @@ public final class CastAnimationOptions {
         private boolean heldItemsShown    = true;
         private int     animationLengthTicks = 0;
         private int     startOffsetTicks     = 0;
-        private ResourceLocation boneHierarchy = null;
+        private boolean compoundBoneHierarchy = false;
 
         private Builder() {}
 
@@ -437,15 +436,16 @@ public final class CastAnimationOptions {
         }
 
         /**
-         * Opts this animation into compounding through the named {@link BoneHierarchy} —
-         * see {@link CastAnimationOptions#boneHierarchy} for the full rationale. Pass a key
-         * like {@code new ResourceLocation("romancedawn", "gear_second")} matching a file at
-         * {@code assets/romancedawn/bone_hierarchy/gear_second.json}. Unset (or passed
-         * {@code null}) means no compounding — every bone reacts only to its own keyframes,
-         * Somnium's original behavior.
+         * Opts this animation into compounding bone rotation/position through the baked
+         * model's real parent hierarchy — see
+         * {@link CastAnimationOptions#compoundBoneHierarchy} for the full rationale. Requires
+         * the model's {@code .geo.json} to have real {@code parent} relationships on the
+         * bones being compounded (see {@code default_player.geo.json}). Defaults to
+         * {@code false} — every bone reacts only to its own keyframes, Somnium's original
+         * behavior.
          */
-        public Builder boneHierarchy(@Nullable ResourceLocation hierarchyId) {
-            this.boneHierarchy = hierarchyId;
+        public Builder compoundBoneHierarchy(boolean value) {
+            this.compoundBoneHierarchy = value;
             return this;
         }
 
@@ -467,7 +467,7 @@ public final class CastAnimationOptions {
                     animationLengthTicks,
                     0f, // capturedLookPitch is stamped later, server-side, at execution
                     startOffsetTicks,
-                    boneHierarchy);
+                    compoundBoneHierarchy);
         }
     }
 }

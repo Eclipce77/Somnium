@@ -2,7 +2,6 @@ package net.eclipce.somnium.client;
 
 import net.eclipce.somnium.Somnium;
 import net.eclipce.somnium.client.keybind.SomniumKeybinds;
-import net.eclipce.somnium.compat.geckolib.player.cast.BoneHierarchyRegistry;
 import net.eclipce.somnium.core.ability.AbilityInstance;
 import net.eclipce.somnium.core.data.SomniumPlayerData;
 import net.eclipce.somnium.core.meter.MeterInstance;
@@ -14,7 +13,6 @@ import net.minecraft.client.KeyMapping;
 import net.minecraft.client.Minecraft;
 import net.minecraft.resources.ResourceLocation;
 import net.minecraftforge.api.distmarker.Dist;
-import net.minecraftforge.client.event.RegisterClientReloadListenersEvent;
 import net.minecraftforge.client.event.RegisterGuiOverlaysEvent;
 import net.minecraftforge.client.event.RegisterKeyMappingsEvent;
 import net.minecraftforge.event.TickEvent;
@@ -91,17 +89,6 @@ public class SomniumClientEvents {
             event.registerAboveAll("ability_bar", new AbilityBarOverlay());
             event.registerAboveAll("meter_bar", new MeterOverlay());
             Somnium.LOGGER.debug("Somnium ability bar overlay registered");
-        }
-
-        /**
-         * Registers the bone-hierarchy JSON loader ({@code assets/*}/bone_hierarchy/*.json,
-         * any namespace) so cast animations can opt into parent-child compounding — see
-         * {@link BoneHierarchyRegistry}.
-         */
-        @SubscribeEvent
-        public static void onRegisterReloadListeners(RegisterClientReloadListenersEvent event) {
-            event.registerReloadListener(new BoneHierarchyRegistry());
-            Somnium.LOGGER.debug("Somnium bone hierarchy registry registered");
         }
     }
 

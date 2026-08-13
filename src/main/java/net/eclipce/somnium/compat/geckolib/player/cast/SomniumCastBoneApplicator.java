@@ -1,18 +1,15 @@
 package net.eclipce.somnium.compat.geckolib.player.cast;
 
-import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.logging.LogUtils;
 import net.minecraft.client.model.PlayerModel;
 import net.minecraft.client.model.geom.ModelPart;
 import net.minecraft.world.entity.player.Player;
-import org.joml.Matrix4f;
 import org.joml.Quaternionf;
 import org.joml.Vector3f;
 import org.slf4j.Logger;
 import software.bernie.geckolib.cache.object.BakedGeoModel;
 import software.bernie.geckolib.cache.object.GeoBone;
 import software.bernie.geckolib.core.animation.AnimationState;
-import software.bernie.geckolib.util.RenderUtils;
 import net.eclipce.somnium.compat.geckolib.mixin.PlayerModelSetupMixin;
 
 import java.util.List;
@@ -397,52 +394,73 @@ public final class SomniumCastBoneApplicator {
 
     /**
      * Compounds each carried bone's rotation and position through its full ancestor chain,
-     * exactly the way GeckoLib's own renderer would, by calling GeckoLib's own per-bone
-     * transform method on a scratch, never-rendered {@link PoseStack}. No-ops entirely unless
-     * {@code options.compoundBoneHierarchy()} is set.
+     * using vanilla's own rest pivots and rotation composition throughout. No-ops entirely
+     * unless {@code options.compoundBoneHierarchy()} is set.
      *
-     * <h3>Why call GeckoLib's own code instead of reimplementing the math</h3>
-     * Earlier versions of this fix hand-derived the composition — first a render-time
-     * PoseStack wrap, then a flat position add, then a hand-rolled quaternion walk reusing
-     * {@link SomniumBoneAnchors} rest pivots and a manually chosen rotation order. All three
-     * were extensively cross-checked against JOML's and GeckoLib's own source and were
-     * internally self-consistent, but "internally consistent" isn't the same guarantee as
-     * "matches Blockbench's own preview" — that guarantee only comes from running the actual
-     * code Blockbench-authored content is designed against. GeckoLib's {@code GeoRenderer}
-     * already does exactly this walk for real hierarchical models: {@code renderRecursively}
-     * calls {@link RenderUtils#prepMatrixForBone} once per bone, and a child bone's call
-     * happens inside the PoseStack frame its parent's call already established. Calling that
-     * same method, in that same order, on a scratch PoseStack we never actually render with,
-     * reproduces GeckoLib's real hierarchical transform exactly — no hand-derived rotation
-     * order, sign convention, or pivot math of our own left to get subtly wrong.
+     * <h3>History — why this isn't the GeckoLib-verbatim version anymore</h3>
+     * This method went through several genuinely different implementations, each one fixing
+     * a real, confirmed problem the previous one had:
+     * <ol>
+     *     <li>A hand-derived quaternion walk using {@link SomniumBoneAnchors} rest pivots
+     *         directly — internally consistent, but never independently verified against
+     *         Blockbench's own output.</li>
+     *     <li>A rewrite calling GeckoLib's own {@code RenderUtils.prepMatrixForBone} verbatim
+     *         on a scratch {@code PoseStack}, root to leaf — reasoned to be more trustworthy
+     *         since it's GeckoLib's real rendering code, not a hand derivation. This
+     *         introduced a real bug: GeckoLib's pivots are absolute Bedrock-space coordinates
+     *         (body and head both sit at {@code [0,24,0]} in {@code default_player.geo.json}),
+     *         and feeding that pivot straight into a rotate-about-pivot step gave head — whose
+     *         pivot coincides with body's — a wildly exaggerated 20+ pixel swing, confirmed
+     *         via direct numeric testing against this rig's data.</li>
+     *     <li>Fixed by expressing each bone's pivot relative to its immediate parent's,
+     *         instead of using GeckoLib's absolute value, plus a missing vanilla-player
+     *         mirror conjugation (confirmed against a known-correct single-bone case) and a
+     *         missing rest-position baseline (arms/legs were computing a delta from rest but
+     *         never landing it on the bone's actual rest position, confirmed by every
+     *         compounded arm/leg rendering bunched near the origin).</li>
+     *     <li><b>This version.</b> Direct in-game testing (body's own rotation direction and
+     *         a leg's rotation both checked against Blockbench in a fixed orthographic view)
+     *         confirmed every bone's <em>rotation</em> was correct, but <em>position</em>
+     *         still wasn't. Comparing the two pivot sources against each other found why:
+     *         {@code bone.getPivotX()} isn't the geo.json's raw value — GeckoLib's own loader
+     *         negates pivot X on bake (confirmed directly in
+     *         {@code BakedModelFactory#constructBone}: {@code updatePivot((float)-pivot.x, ...)},
+     *         the same pattern it uses for rotation X/Y). The parent-relative pivot from step
+     *         3 was built from this already-negated value — a different coordinate convention
+     *         than {@link SomniumBoneAnchors}, which the rest-baseline addition in the same
+     *         step was already using. Rotation never touches pivot values at all (only
+     *         {@code rotateMatrixAroundBone}'s own animated Z/Y/X values matter there), which
+     *         is exactly why rotation was provably correct while position wasn't — mixing two
+     *         coordinate conventions is a position-only bug by construction. Fixed by using
+     *         {@link SomniumBoneAnchors}'s vanilla-convention rest pivot consistently for both
+     *         the position offset and the rest baseline, rather than mixing it with GeckoLib's
+     *         Bedrock-convention one.</li>
+     * </ol>
      *
-     * <h3>What this requires</h3>
-     * The baked model's bones need real {@code parent}/{@code childBones} relationships —
-     * i.e. the {@code .geo.json} actually has {@code "parent": "body"} on head/arms/legs,
-     * matching the Blockbench rig, rather than Somnium's original flat sibling layout. See
-     * {@code default_player.geo.json}. This does NOT change vanilla rendering at all — the
-     * vanilla {@link PlayerModel} stays exactly as flat as ever; only {@code GeoBone.getParent}
-     * (read here, and only here) depends on the reparenting.
-     *
-     * <h3>The walk</h3>
-     * For a bone whose ancestry is {@code [right_arm, body]} (leaf first): walk root to leaf
-     * (reverse order), calling {@code RenderUtils.prepMatrixForBone(scratch, bone)} once per
-     * ancestor on the SAME scratch PoseStack, so each subsequent call composes inside the
-     * previous one's frame — identical to how {@code renderRecursively} nests real child
-     * bones inside their parent's already-transformed PoseStack. After the walk, the
-     * PoseStack's accumulated pose IS the bone's fully-compounded transform. A bone with no
-     * parent (chain length 1) is left untouched — {@link #applyBoneIfPresent} already wrote
-     * the correct answer for it.
-     *
-     * <h3>Extracting the result</h3>
-     * {@code prepMatrixForBone} also applies the bone's own animated SCALE (between rotate
-     * and translate-away-from-pivot) — for free, this makes scale compound correctly too,
-     * without this method needing to handle it separately. That means the accumulated
-     * {@link Matrix4f} isn't a pure rigid transform, so translation and rotation are pulled
-     * out with {@code getTranslation}/{@code getNormalizedRotation} (which is robust to a
-     * scaled matrix) rather than reading matrix columns directly. GeckoLib's own translate
-     * calls all divide by 16 (blocks, not the pixel units {@code ModelPart.x/y/z} use), so
-     * the extracted translation is multiplied back by 16 before being written.
+     * <h3>The current approach</h3>
+     * Pure quaternion/vector math, no {@code PoseStack} or {@code RenderUtils} — walking root
+     * to leaf, tracking accumulated world rotation and world position together:
+     * <ul>
+     *     <li><b>Rotation:</b> each bone's own rotation is built from GeckoLib's raw
+     *         {@code getRotZ/Y/X} (Z-Y-X order, matching {@code RenderUtils.rotateMatrixAroundBone}
+     *         exactly), then conjugated by the vanilla player mirror. Worked out in full, that
+     *         conjugation reduces to negating the quaternion's x and y components and leaving
+     *         z/w alone — verified numerically before relying on it. Conjugating each bone
+     *         individually and composing is mathematically identical to conjugating the whole
+     *         composed chain once at the end ({@code mirror*(A*B)*mirror == (mirror*A*mirror)*
+     *         (mirror*B*mirror)}, since {@code mirror*mirror = identity}, confirmed
+     *         numerically) — which is what the previous PoseStack version did, so this
+     *         reproduces its already-correct rotation output exactly, bone for bone.</li>
+     *     <li><b>Position:</b> the root's world position starts at its own vanilla rest pivot
+     *         plus its own animated delta. Each subsequent bone adds — rotated by the
+     *         accumulated rotation <em>so far</em> (not including its own rotation yet,
+     *         matching the order animated position is applied before animated rotation) —
+     *         the vanilla-rest-pivot offset from its immediate parent, plus its own animated
+     *         delta. Both use vanilla's sign convention throughout ({@code -px,-py,+pz},
+     *         matching {@link #applyBoneIfPresent} exactly), never GeckoLib's Bedrock one.</li>
+     * </ul>
+     * A bone with no parent (chain length 1) is left untouched — {@link #applyBoneIfPresent}
+     * already wrote the correct answer for it.
      *
      * <h3>A latent assumption worth knowing about</h3>
      * This overwrites (not adds to) each carried part's rotation and position with the
@@ -451,48 +469,6 @@ public final class SomniumCastBoneApplicator {
      * locomotion contribution before {@link #applyAllBones} ran. If a future animation stops
      * suppressing one of these parts, this method would need to preserve that vanilla
      * contribution instead of overwriting it.
-     *
-     * <h3>Two corrections on top of calling GeckoLib's code (found via direct numeric
-     * verification against this exact rig, not guessed)</h3>
-     * <ol>
-     *     <li><b>The vanilla player mirror.</b> {@code RenderUtils} is GeckoLib's generic
-     *         transform code — it has no idea it might be feeding a vanilla player model,
-     *         which is rendered through an extra {@code scale(-1, -1, 1)} mirror that
-     *         {@link #applyBoneIfPresent}'s proven sign conventions already account for.
-     *         Calling {@code RenderUtils} verbatim without this produces a result mirrored
-     *         on X/Y relative to what vanilla expects — but it has to be a full
-     *         conjugation (mirror the frame, do the real work, un-mirror), not just a
-     *         one-sided scale before the walk starts. Position comes out identical either
-     *         way (a translation under a left-multiplied mirror is just the mirrored
-     *         vector, prepend-only is fine), but rotation is not: two rotations generally
-     *         don't commute with the mirror, only pure-Z ones do, so mirroring just the
-     *         input changes WHICH rotation gets extracted, not merely its sign. Confirmed
-     *         both the bug and the fix against a single-bone case (body only, checked
-     *         against {@link #applyBoneIfPresent}'s known-correct output) before this was
-     *         applied to the full multi-bone walk: prepend-only silently flipped the sign,
-     *         scaling by {@code (-1,-1,1)} again after the loop closes the conjugation and
-     *         matches exactly.</li>
-     *     <li><b>Pivot values are geo-model-absolute, not parent-relative.</b> Bedrock-format
-     *         pivots (what {@code bone.getPivotX/Y/Z} return) are absolute coordinates in
-     *         GeckoLib's own geometry space — e.g. body and head both sit at {@code [0,24,0]}
-     *         in {@code default_player.geo.json}, matching Blockbench's own numbers exactly.
-     *         Vanilla's {@code ModelPart} fields use a completely different origin (body and
-     *         head both rest at {@code 0}), and {@link #applyBoneIfPresent} never references
-     *         a bone's pivot for position at all — only its animated delta. Feeding
-     *         {@code RenderUtils.translateToPivotPoint} a bone's raw absolute pivot (as
-     *         {@code prepMatrixForBone} does internally) uses a 24-unit lever arm for a
-     *         rotation that should have none, which is exactly what direct numeric testing
-     *         against this data showed: a plausible few-pixel result for right_arm (pivot
-     *         meaningfully different from body's) alongside a wildly exaggerated 20+ pixel
-     *         swing for head specifically (pivot identical to body's) — confirmed as the
-     *         cause of the "head flying into the sky" screenshot. Fixed by not calling
-     *         {@code prepMatrixForBone} as one unit; the pivot translate/detranslate pair is
-     *         done by hand with the root bone's pivot treated as {@code (0,0,0)} and every
-     *         other bone's pivot expressed relative to its immediate parent's, while
-     *         {@code translateMatrixToBone}/{@code rotateMatrixAroundBone}/
-     *         {@code scaleMatrixForBone} — the parts that read animated keyframe data, not
-     *         static geometry — are still called from {@code RenderUtils} verbatim.</li>
-     * </ol>
      */
     private static void applyBoneHierarchyCompound(BakedGeoModel bakedModel,
                                                     PlayerModel<?> playerModel,
@@ -520,73 +496,66 @@ public final class SomniumCastBoneApplicator {
             if (chainBroken) continue;
             java.util.Collections.reverse(chain);
 
-            // The walk: GeckoLib's own per-bone animated transform, called once per ancestor —
-            // but with the pivot translate/detranslate pair done by hand (root -> (0,0,0),
-            // everyone else -> relative to their immediate parent) instead of calling
-            // prepMatrixForBone as one unit. See this method's javadoc for why.
-            PoseStack scratch = new PoseStack();
-            scratch.scale(-1f, -1f, 1f); // establish the vanilla player mirror before anything else
-            float prevPivotX = 0, prevPivotY = 0, prevPivotZ = 0;
+            // The walk: root to leaf, tracking accumulated WORLD ROTATION and WORLD POSITION
+            // together, in pure quaternion/vector terms — no PoseStack or RenderUtils in this
+            // version. See this method's javadoc for why the position math changed; rotation
+            // is unchanged from the previous version (verified below).
+            //
+            // Each bone's own rotation is built from GeckoLib's raw (unconjugated) getRotZ/Y/X,
+            // Z-Y-X order — matching RenderUtils.rotateMatrixAroundBone exactly — then
+            // conjugated by the vanilla player mirror. That conjugation, worked out in full,
+            // reduces to negating the quaternion's x and y components and leaving z/w alone:
+            // verified numerically (mirror * q * mirror^-1 for an arbitrary q) before relying
+            // on it here. Conjugating per-bone this way and composing is mathematically
+            // identical to composing raw and conjugating the whole chain once at the very end
+            // (proven: mirror*(A*B)*mirror == (mirror*A*mirror)*(mirror*B*mirror), since
+            // mirror*mirror = identity) — which is exactly what the previous PoseStack version
+            // did, so this reproduces its rotation output exactly, bone for bone.
+            Quaternionf accumRot = null;
+            Vector3f accumPos = null;
+            float[] prevRestVanilla = null;
+
             for (int i = 0; i < chain.size(); i++) {
                 GeoBone b = chain.get(i);
-                float pivotX, pivotY, pivotZ;
+                // Vanilla's own rest pivot (block units) — the SAME table changeDirectionOnLook
+                // and the rest-baseline addition below both already trust. Using this
+                // consistently for the position offset, instead of GeckoLib's own pivot
+                // (Bedrock-convention, negated on X at load — confirmed via
+                // BakedModelFactory#constructBone), is the actual fix: rotation never touches
+                // pivot values at all, only position does, which is exactly why rotation was
+                // provably correct while position wasn't.
+                float[] restVanilla = SomniumBoneAnchors.restPivot(b.getName());
+
+                Quaternionf ownRotRaw = new Quaternionf().rotationZYX(b.getRotZ(), b.getRotY(), b.getRotX());
+                Quaternionf ownRot = new Quaternionf(-ownRotRaw.x(), -ownRotRaw.y(), ownRotRaw.z(), ownRotRaw.w());
+
+                // Own position delta, vanilla sign convention (matches applyBoneIfPresent's
+                // -px,-py,+pz exactly), converted to block units to match restVanilla.
+                Vector3f ownDelta = new Vector3f(-b.getPosX() / 16f, -b.getPosY() / 16f, b.getPosZ() / 16f);
+
                 if (i == 0) {
-                    pivotX = 0; pivotY = 0; pivotZ = 0;
+                    accumPos = new Vector3f(restVanilla[0], restVanilla[1], restVanilla[2]).add(ownDelta);
+                    accumRot = ownRot;
                 } else {
-                    pivotX = b.getPivotX() - prevPivotX;
-                    pivotY = b.getPivotY() - prevPivotY;
-                    pivotZ = b.getPivotZ() - prevPivotZ;
+                    Vector3f offset = new Vector3f(restVanilla[0] - prevRestVanilla[0],
+                            restVanilla[1] - prevRestVanilla[1], restVanilla[2] - prevRestVanilla[2]);
+                    Vector3f rotatedOffset = accumRot.transform(new Vector3f(offset));
+                    Vector3f rotatedOwnDelta = accumRot.transform(new Vector3f(ownDelta));
+                    accumPos.add(rotatedOffset).add(rotatedOwnDelta);
+                    accumRot.mul(ownRot);
                 }
-
-                RenderUtils.translateMatrixToBone(scratch, b);
-                scratch.translate(pivotX / 16f, pivotY / 16f, pivotZ / 16f);
-                RenderUtils.rotateMatrixAroundBone(scratch, b);
-                RenderUtils.scaleMatrixForBone(scratch, b);
-                scratch.translate(-pivotX / 16f, -pivotY / 16f, -pivotZ / 16f);
-
-                prevPivotX = b.getPivotX();
-                prevPivotY = b.getPivotY();
-                prevPivotZ = b.getPivotZ();
+                prevRestVanilla = restVanilla;
             }
-            // Diagnostic snapshot BEFORE the closing mirror, so a divergence can be isolated
-            // to "before the walk finishes" vs "the closing conjugation / decomposition step" —
-            // see the quaternion component logging below.
-            Matrix4f preCloseMirrorPose = new Matrix4f(scratch.last().pose());
-            Quaternionf preCloseMirrorRot = preCloseMirrorPose.getNormalizedRotation(new Quaternionf());
 
-            // Close the conjugation: scale(-1,-1,1) is its own inverse, so applying it again
-            // here completes "mirror, do the real work, un-mirror" rather than leaving the
-            // walk permanently inside a mirrored frame. Skipping this step is what produced
-            // the "upside down" rotation in earlier testing — mirroring only the input side
-            // changes WHICH rotation gets extracted, not just its sign, because rotations
-            // don't commute with the mirror in general (only pure-Z rotations do). Position
-            // is unaffected by this distinction — the translation column comes out identical
-            // either way — so this being missing was a rotation-only bug, confirmed by
-            // checking a single-bone case against applyBoneIfPresent's known-correct answer
-            // before shipping this fix. EXACTLY ONE call here — a second one cancels the
-            // first (scale(-1,-1,1) twice is identity), which is what briefly reintroduced
-            // the upside-down bug when the diagnostic snapshot above was added.
-            scratch.scale(-1f, -1f, 1f);
-
-            Matrix4f finalPose = scratch.last().pose();
-            Vector3f worldPos = finalPose.getTranslation(new Vector3f());
-            Quaternionf worldRot = finalPose.getNormalizedRotation(new Quaternionf());
             Vector3f euler = new Vector3f();
-            worldRot.getEulerAnglesZYX(euler);
+            accumRot.getEulerAnglesZYX(euler);
 
-            // The walk above computes a DELTA from rest (verified: feeding it all-zero
-            // rotation/position input produces exactly (0,0,0) — confirmed numerically before
-            // this was written, not assumed). That delta needs to land on top of this specific
-            // bone's actual vanilla rest position, not at the origin — SomniumBoneAnchors is
-            // the same table changeDirectionOnLook already trusts for exactly this reason.
-            // Missing this previously meant every compounded arm/leg rendered bunched up near
-            // (0,0,0) instead of out at the shoulder/hip — head happened to look unaffected by
-            // this specific bug only because its own rest pivot is (0,0,0), so adding it was a
-            // no-op there, which is exactly why this went unnoticed until arms/legs were checked.
-            float[] restPx = SomniumBoneAnchors.restPivot(boneName);
-            part.x = restPx[0] * 16f + worldPos.x() * 16f;
-            part.y = restPx[1] * 16f + worldPos.y() * 16f;
-            part.z = restPx[2] * 16f + worldPos.z() * 16f;
+            // accumPos already includes this bone's vanilla rest position (folded in at i==0
+            // and carried through every offset since) — no separate rest-baseline add needed
+            // here, unlike the previous version. Adding one on top now would double-count it.
+            part.x = accumPos.x() * 16f;
+            part.y = accumPos.y() * 16f;
+            part.z = accumPos.z() * 16f;
             part.xRot = euler.x();
             part.yRot = euler.y();
             part.zRot = euler.z();
@@ -599,12 +568,6 @@ public final class SomniumCastBoneApplicator {
                         + " finalPos=(" + part.x + ", " + part.y + ", " + part.z + ")"
                         + " finalRotDeg=(" + Math.toDegrees(part.xRot) + ", "
                         + Math.toDegrees(part.yRot) + ", " + Math.toDegrees(part.zRot) + ")");
-                System.out.println("[Somnium-DIAG] quat: anim=" + probedAnim
-                        + " bone=" + boneName
-                        + " preCloseMirror(x,y,z,w)=(" + preCloseMirrorRot.x() + ", " + preCloseMirrorRot.y()
-                        + ", " + preCloseMirrorRot.z() + ", " + preCloseMirrorRot.w() + ")"
-                        + " final(x,y,z,w)=(" + worldRot.x() + ", " + worldRot.y()
-                        + ", " + worldRot.z() + ", " + worldRot.w() + ")");
             }
         }
     }

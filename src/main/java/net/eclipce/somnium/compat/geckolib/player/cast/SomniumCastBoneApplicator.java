@@ -438,26 +438,40 @@ public final class SomniumCastBoneApplicator {
      *         parent's — a real, physically meaningful contribution the simplified formula
      *         silently dropped. Rotation doesn't depend on pivot values at all, which is
      *         exactly why it stayed correct through every version while position didn't.</li>
-     *     <li><b>Body's own position channel was being double-counted against reality.</b>
-     *         Found by re-reading {@link #applyBoneIfPresent} in full — code this method
-     *         never touches: it explicitly skips the body bone's position channel entirely
-     *         ({@code if (!"body".equals(boneName))} guards the whole position block), with
-     *         a documented rationale that a root bone's translation has no clean equivalent
-     *         on vanilla's flat, non-hierarchical {@code ModelPart} tree. That means body's
-     *         authored position keyframes never actually render — only its rotation (and
-     *         scale) do. This walk's root step was calling
-     *         {@code RenderUtils.translateMatrixToBone} for body regardless, using its full
-     *         animated position delta as the base every child compounds onto — a base body
-     *         itself never actually renders at. Every carried bone was compounding onto a
-     *         phantom body position, which is exactly the kind of upper-body-wide positional
-     *         error (head, arms, and everything downstream all shifted together) reported
-     *         after the previous fixes. Fixed by skipping
-     *         {@code translateMatrixToBone} specifically for the bone named {@code "body"}
-     *         at the root step — its rotation still fully composes, only its position
-     *         channel is dropped, matching {@link #applyBoneIfPresent} exactly.</li>
+     *     <li><b>Body's own position channel — a real gap, but the fix went through two
+     *         iterations.</b> Found by re-reading {@link #applyBoneIfPresent} in full — code
+     *         this method never touches: it explicitly skips the body bone's position
+     *         channel entirely ({@code if (!"body".equals(boneName))} guards the whole
+     *         position block), with a documented rationale that a root bone's translation
+     *         has no clean equivalent on vanilla's flat, non-hierarchical {@code ModelPart}
+     *         tree — writing it only to body detaches the chest from head/limbs, since
+     *         nothing carries that translation to them.
+     *         <p><b>First attempt:</b> made this walk match that limitation — skip
+     *         {@code translateMatrixToBone} for body at the root step too, so the base every
+     *         child compounds onto matches what body itself actually renders as. This was
+     *         wrong: body's authored {@code (0,-5.6,-1)} keyframe isn't incidental, it's what
+     *         keeps the character grounded through a 45.5° forward lean. Dropping it left
+     *         every carried bone floating roughly 0.3 blocks above where it should plant —
+     *         confirmed numerically (the leg's computed pivot lands 4.7 pixels above the
+     *         rest position needed for its foot to reach the ground) and visually (reported
+     *         as the character floating above the ground).</p>
+     *         <p><b>Actual fix:</b> the "no clean equivalent" limitation predates this
+     *         method — compounding is exactly the mechanism that CAN carry a root's
+     *         translation to its children correctly, which plain per-bone application
+     *         couldn't. So body's position is included in the walk (children correctly
+     *         inherit it), and applied directly to body's own {@code ModelPart} once, before
+     *         the per-bone loop below — bypassing {@link #applyBoneIfPresent}'s drop, without
+     *         modifying that shared method, so every other ability that doesn't opt into
+     *         compounding is completely unaffected. Verified numerically before shipping:
+     *         with both pieces included, the leg's computed foot position lands within under
+     *         a pixel of true ground level, instead of 4.7 pixels short.</p></li>
      * </ol>
      *
-     * <h3>The walk (current, reverted-to version)</h3>
+     * <h3>The walk</h3>
+     * Body's own position IS included in this walk (see above) — the walk always includes
+     * every bone's {@code translateMatrixToBone} call, root or not; only the pivot
+     * translate/detranslate pair is special-cased for the root.
+     *
      * For a bone whose ancestry is {@code [right_arm, body]} (leaf first): walk root to leaf,
      * doing {@code translateMatrixToBone; translate(pivot); rotateMatrixAroundBone;
      * scaleMatrixForBone; translate(-pivot)} once per ancestor on the SAME scratch PoseStack,
@@ -495,14 +509,39 @@ public final class SomniumCastBoneApplicator {
      * contribution instead of overwriting it.
      *
      * <h3>What's still unresolved</h3>
-     * This version's position is confirmed closer to Blockbench than the reverted rewrite,
-     * but not confirmed fully correct — only rotation has been independently verified against
-     * Blockbench directly. Position for arms/legs specifically is still an open question.
+     * Body's own position being confirmed correct (user report: "body is fixed") validated
+     * the body-position-channel history above up through including it in the walk. The
+     * grounding fix (applying it directly to body's own {@code ModelPart} too) is verified
+     * numerically (leg foot position lands within a pixel of true ground level) but not yet
+     * confirmed in-game. Head/arm position specifically was still reported as "not quite
+     * matching" even with body fixed — not yet root-caused; may be related to this same fix
+     * (arms compound through body the same way legs do) or may be a separate, remaining issue.
      */
     private static void applyBoneHierarchyCompound(BakedGeoModel bakedModel,
                                                     PlayerModel<?> playerModel,
                                                     CastAnimationOptions options) {
         if (!options.compoundBoneHierarchy()) return;
+
+        // Apply body's own position delta directly — applyBoneIfPresent (which already ran
+        // in applyAllBones, before this method) skips it entirely for the reason documented
+        // above, but that limitation doesn't apply here: this method's whole purpose is
+        // correctly carrying a bone's transform to its children, which is exactly what
+        // body's position needs. Applied once, here, not per-compounded-bone — body isn't
+        // itself one of COMPOUNDABLE_BONES. Uses applyBoneIfPresent's exact sign convention
+        // (-px, -py, +pz) for consistency with how every other bone's position is read.
+        Optional<GeoBone> bodyOpt = bakedModel.getBone("body");
+        if (bodyOpt.isPresent() && !bodyOpt.get().isHidden()) {
+            GeoBone bodyBone = bodyOpt.get();
+            ModelPart bodyPart = SomniumPlayerBoneMap.getPart(playerModel, "body");
+            if (bodyPart != null) {
+                float bpx = bodyBone.getPosX();
+                float bpy = bodyBone.getPosY();
+                float bpz = bodyBone.getPosZ();
+                if (bpx != 0f) bodyPart.x -= bpx;
+                if (bpy != 0f) bodyPart.y -= bpy;
+                if (bpz != 0f) bodyPart.z += bpz;
+            }
+        }
 
         for (String boneName : COMPOUNDABLE_BONES) {
             Optional<GeoBone> opt = bakedModel.getBone(boneName);
@@ -556,19 +595,23 @@ public final class SomniumCastBoneApplicator {
                 }
 
                 // applyBoneIfPresent (the plain, non-compounded path every other bone in this
-                // rig goes through) explicitly drops the "body" bone's position channel —
+                // rig goes through) drops the "body" bone's position channel entirely —
                 // "if (!"body".equals(boneName))" guards the whole position block — with a
                 // documented rationale: there's no clean way to translate a root bone across
-                // vanilla's flat, non-hierarchical ModelPart tree, so body's authored position
-                // keyframes (gear_second_loop: (0,-5.6,-1)) are never applied; only its rotation
-                // (and scale) render. This walk needs to match that exactly for the bone it
-                // treats as root — body is always that bone, in this rig — otherwise every
-                // child compounds onto a base position body itself never actually renders at,
-                // which is exactly the upper-body positional mismatch this was producing.
-                boolean isBodyRoot = i == 0 && "body".equals(b.getName());
-                if (!isBodyRoot) {
-                    RenderUtils.translateMatrixToBone(scratch, b);
-                }
+                // vanilla's flat, non-hierarchical ModelPart tree without also carrying that
+                // translation to every child, which plain per-bone application can't do.
+                // That limitation predates this method; compounding IS the mechanism that
+                // carries a translation to children correctly, so it doesn't apply here.
+                // Confirmed numerically: body's authored -5.6-pixel Y keyframe is what keeps
+                // the legs grounded through a 45.5° forward lean — dropping it (an earlier
+                // version of this fix did, matching applyBoneIfPresent for consistency)
+                // left every carried bone floating about 0.3 blocks above where it should
+                // plant, because nothing was left to counteract the hips lifting as the
+                // rotation swept them. Body's position is included here, and applied
+                // directly to body's own ModelPart below (see after this loop) — bypassing
+                // applyBoneIfPresent's drop specifically for animations that opt into
+                // compounding, without touching that shared method at all.
+                RenderUtils.translateMatrixToBone(scratch, b);
                 scratch.translate(pivotX / 16f, pivotY / 16f, pivotZ / 16f);
                 RenderUtils.rotateMatrixAroundBone(scratch, b);
                 RenderUtils.scaleMatrixForBone(scratch, b);

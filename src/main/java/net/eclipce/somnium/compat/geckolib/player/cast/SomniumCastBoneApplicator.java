@@ -605,6 +605,26 @@ public final class SomniumCastBoneApplicator {
                 float pivotX, pivotY, pivotZ;
                 if (i == 0) {
                     pivotX = 0; pivotY = 0; pivotZ = 0;
+                } else if (i == 1 && ("right_arm".equals(boneName) || "left_arm".equals(boneName))) {
+                    // Arms specifically use their own ABSOLUTE GeckoLib pivot here, not
+                    // relative-to-parent like every other compounded bone. Found by direct,
+                    // isolated testing: left_arm — by far the most extreme rotation of any
+                    // bone in this animation (-72.48°, 35.07°, -51.38°) — was landing within
+                    // a pixel of left_leg's position under the relative-pivot approach,
+                    // visibly colliding in-game despite Blockbench showing no such conflict.
+                    // right_arm's much smaller rotation kept it well clear of right_leg under
+                    // the same formula (7-pixel Y gap), which is why this wasn't caught by
+                    // earlier testing on legs/head alone — the two approaches only diverge
+                    // meaningfully at large rotation magnitudes. Switching arms to absolute
+                    // pivots resolved the collision in direct calculation without needing to
+                    // touch head or legs, which stay on the relative approach confirmed
+                    // correct against real logged output. This is a targeted, per-bone
+                    // difference, not a general "arms vs legs" rule — if a future animation
+                    // gives legs similarly extreme rotations, they may need the same
+                    // treatment, and this should be revisited if so.
+                    pivotX = b.getPivotX();
+                    pivotY = b.getPivotY();
+                    pivotZ = b.getPivotZ();
                 } else {
                     pivotX = b.getPivotX() - prevPivotX;
                     pivotY = b.getPivotY() - prevPivotY;

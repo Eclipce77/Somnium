@@ -438,6 +438,23 @@ public final class SomniumCastBoneApplicator {
      *         parent's — a real, physically meaningful contribution the simplified formula
      *         silently dropped. Rotation doesn't depend on pivot values at all, which is
      *         exactly why it stayed correct through every version while position didn't.</li>
+     *     <li><b>Body's own position channel was being double-counted against reality.</b>
+     *         Found by re-reading {@link #applyBoneIfPresent} in full — code this method
+     *         never touches: it explicitly skips the body bone's position channel entirely
+     *         ({@code if (!"body".equals(boneName))} guards the whole position block), with
+     *         a documented rationale that a root bone's translation has no clean equivalent
+     *         on vanilla's flat, non-hierarchical {@code ModelPart} tree. That means body's
+     *         authored position keyframes never actually render — only its rotation (and
+     *         scale) do. This walk's root step was calling
+     *         {@code RenderUtils.translateMatrixToBone} for body regardless, using its full
+     *         animated position delta as the base every child compounds onto — a base body
+     *         itself never actually renders at. Every carried bone was compounding onto a
+     *         phantom body position, which is exactly the kind of upper-body-wide positional
+     *         error (head, arms, and everything downstream all shifted together) reported
+     *         after the previous fixes. Fixed by skipping
+     *         {@code translateMatrixToBone} specifically for the bone named {@code "body"}
+     *         at the root step — its rotation still fully composes, only its position
+     *         channel is dropped, matching {@link #applyBoneIfPresent} exactly.</li>
      * </ol>
      *
      * <h3>The walk (current, reverted-to version)</h3>
@@ -538,7 +555,20 @@ public final class SomniumCastBoneApplicator {
                     pivotZ = b.getPivotZ() - prevPivotZ;
                 }
 
-                RenderUtils.translateMatrixToBone(scratch, b);
+                // applyBoneIfPresent (the plain, non-compounded path every other bone in this
+                // rig goes through) explicitly drops the "body" bone's position channel —
+                // "if (!"body".equals(boneName))" guards the whole position block — with a
+                // documented rationale: there's no clean way to translate a root bone across
+                // vanilla's flat, non-hierarchical ModelPart tree, so body's authored position
+                // keyframes (gear_second_loop: (0,-5.6,-1)) are never applied; only its rotation
+                // (and scale) render. This walk needs to match that exactly for the bone it
+                // treats as root — body is always that bone, in this rig — otherwise every
+                // child compounds onto a base position body itself never actually renders at,
+                // which is exactly the upper-body positional mismatch this was producing.
+                boolean isBodyRoot = i == 0 && "body".equals(b.getName());
+                if (!isBodyRoot) {
+                    RenderUtils.translateMatrixToBone(scratch, b);
+                }
                 scratch.translate(pivotX / 16f, pivotY / 16f, pivotZ / 16f);
                 RenderUtils.rotateMatrixAroundBone(scratch, b);
                 RenderUtils.scaleMatrixForBone(scratch, b);

@@ -397,52 +397,108 @@ public final class SomniumCastBoneApplicator {
 
     /**
      * Compounds each carried bone's rotation and position through its full ancestor chain,
-     * exactly the way GeckoLib's own renderer would, by calling GeckoLib's own per-bone
-     * transform method on a scratch, never-rendered {@link PoseStack}. No-ops entirely unless
-     * {@code options.compoundBoneHierarchy()} is set.
+     * by calling GeckoLib's own per-bone transform method on a scratch, never-rendered
+     * {@link PoseStack}. No-ops entirely unless {@code options.compoundBoneHierarchy()} is set.
      *
-     * <h3>Why call GeckoLib's own code instead of reimplementing the math</h3>
-     * Earlier versions of this fix hand-derived the composition — first a render-time
-     * PoseStack wrap, then a flat position add, then a hand-rolled quaternion walk reusing
-     * {@link SomniumBoneAnchors} rest pivots and a manually chosen rotation order. All three
-     * were extensively cross-checked against JOML's and GeckoLib's own source and were
-     * internally self-consistent, but "internally consistent" isn't the same guarantee as
-     * "matches Blockbench's own preview" — that guarantee only comes from running the actual
-     * code Blockbench-authored content is designed against. GeckoLib's {@code GeoRenderer}
-     * already does exactly this walk for real hierarchical models: {@code renderRecursively}
-     * calls {@link RenderUtils#prepMatrixForBone} once per bone, and a child bone's call
-     * happens inside the PoseStack frame its parent's call already established. Calling that
-     * same method, in that same order, on a scratch PoseStack we never actually render with,
-     * reproduces GeckoLib's real hierarchical transform exactly — no hand-derived rotation
-     * order, sign convention, or pivot math of our own left to get subtly wrong.
-     *
-     * <h3>What this requires</h3>
-     * The baked model's bones need real {@code parent}/{@code childBones} relationships —
-     * i.e. the {@code .geo.json} actually has {@code "parent": "body"} on head/arms/legs,
-     * matching the Blockbench rig, rather than Somnium's original flat sibling layout. See
-     * {@code default_player.geo.json}. This does NOT change vanilla rendering at all — the
-     * vanilla {@link PlayerModel} stays exactly as flat as ever; only {@code GeoBone.getParent}
-     * (read here, and only here) depends on the reparenting.
+     * <h3>History</h3>
+     * This method went through several genuinely different implementations, each fixing a
+     * real, confirmed problem — and one step that looked like a fix but was a regression,
+     * caught by direct in-game comparison against Blockbench rather than assumed away:
+     * <ol>
+     *     <li>A hand-derived quaternion walk using {@link SomniumBoneAnchors} rest pivots
+     *         directly — internally consistent, but never independently verified.</li>
+     *     <li>Rewritten to call GeckoLib's own {@code RenderUtils.prepMatrixForBone} verbatim
+     *         on a scratch PoseStack. This surfaced a real bug: GeckoLib's pivots are absolute
+     *         Bedrock-space coordinates (body and head both sit at {@code [0,24,0]} in
+     *         {@code default_player.geo.json}), and feeding that straight into a
+     *         rotate-about-pivot step gave head — whose pivot coincides with body's — a
+     *         wildly exaggerated 20+ pixel swing.</li>
+     *     <li>Fixed by expressing each bone's pivot relative to its immediate parent's
+     *         (still using GeckoLib's own pivot values, just as a difference rather than
+     *         absolute), plus a missing vanilla-player mirror conjugation and a missing
+     *         rest-position baseline (arms/legs were computing a delta from rest but never
+     *         landing it on the bone's actual rest position). <b>This is the version below.</b></li>
+     *     <li>Direct in-game testing (body's rotation direction and a leg's rotation both
+     *         checked against Blockbench in a fixed orthographic view) confirmed every bone's
+     *         rotation was correct, but position still wasn't. Suspecting a coordinate-system
+     *         mix — GeckoLib's own pivot is negated on X at bake time (confirmed in
+     *         {@code BakedModelFactory#constructBone}), a different convention than
+     *         {@link SomniumBoneAnchors}'s vanilla one used for the rest baseline — this was
+     *         rewritten as "clean" textbook forward kinematics (parent world position +
+     *         parent world rotation x (vanilla rest offset + own delta)), using
+     *         {@link SomniumBoneAnchors} consistently instead of GeckoLib's pivot.</li>
+     *     <li><b>That rewrite was wrong, reverted back to step 3's approach.</b> In-game
+     *         testing showed it as a regression, not a fix: legs crossed to the wrong side,
+     *         arms got worse, only head (whose offset is zero either way) was unaffected.
+     *         The textbook formula was missing a real term — confirmed by direct calculation
+     *         of {@code translate(-offset) -> rotate(child's own rotation) -> translate(offset)}
+     *         applied to the origin, which is nonzero. The translate-to-pivot / rotate /
+     *         translate-back structure this method actually uses lets the pivot offset get
+     *         swept by the <em>child's own rotation</em>, not just carried along by the
+     *         parent's — a real, physically meaningful contribution the simplified formula
+     *         silently dropped. Rotation doesn't depend on pivot values at all, which is
+     *         exactly why it stayed correct through every version while position didn't.</li>
+     *     <li><b>Body's own position channel — a real gap, but the fix went through two
+     *         iterations.</b> Found by re-reading {@link #applyBoneIfPresent} in full — code
+     *         this method never touches: it explicitly skips the body bone's position
+     *         channel entirely ({@code if (!"body".equals(boneName))} guards the whole
+     *         position block), with a documented rationale that a root bone's translation
+     *         has no clean equivalent on vanilla's flat, non-hierarchical {@code ModelPart}
+     *         tree — writing it only to body detaches the chest from head/limbs, since
+     *         nothing carries that translation to them.
+     *         <p><b>First attempt:</b> made this walk match that limitation — skip
+     *         {@code translateMatrixToBone} for body at the root step too, so the base every
+     *         child compounds onto matches what body itself actually renders as. This was
+     *         wrong: body's authored {@code (0,-5.6,-1)} keyframe isn't incidental, it's what
+     *         keeps the character grounded through a 45.5° forward lean. Dropping it left
+     *         every carried bone floating roughly 0.3 blocks above where it should plant —
+     *         confirmed numerically (the leg's computed pivot lands 4.7 pixels above the
+     *         rest position needed for its foot to reach the ground) and visually (reported
+     *         as the character floating above the ground).</p>
+     *         <p><b>Actual fix:</b> the "no clean equivalent" limitation predates this
+     *         method — compounding is exactly the mechanism that CAN carry a root's
+     *         translation to its children correctly, which plain per-bone application
+     *         couldn't. So body's position is included in the walk (children correctly
+     *         inherit it), and applied directly to body's own {@code ModelPart} once, before
+     *         the per-bone loop below — bypassing {@link #applyBoneIfPresent}'s drop, without
+     *         modifying that shared method, so every other ability that doesn't opt into
+     *         compounding is completely unaffected. Verified numerically before shipping:
+     *         with both pieces included, the leg's computed foot position lands within under
+     *         a pixel of true ground level, instead of 4.7 pixels short.</p></li>
+     * </ol>
      *
      * <h3>The walk</h3>
-     * For a bone whose ancestry is {@code [right_arm, body]} (leaf first): walk root to leaf
-     * (reverse order), calling {@code RenderUtils.prepMatrixForBone(scratch, bone)} once per
-     * ancestor on the SAME scratch PoseStack, so each subsequent call composes inside the
-     * previous one's frame — identical to how {@code renderRecursively} nests real child
-     * bones inside their parent's already-transformed PoseStack. After the walk, the
-     * PoseStack's accumulated pose IS the bone's fully-compounded transform. A bone with no
-     * parent (chain length 1) is left untouched — {@link #applyBoneIfPresent} already wrote
-     * the correct answer for it.
+     * Body's own position IS included in this walk (see above) — the walk always includes
+     * every bone's {@code translateMatrixToBone} call, root or not; only the pivot
+     * translate/detranslate pair is special-cased for the root.
      *
-     * <h3>Extracting the result</h3>
-     * {@code prepMatrixForBone} also applies the bone's own animated SCALE (between rotate
-     * and translate-away-from-pivot) — for free, this makes scale compound correctly too,
-     * without this method needing to handle it separately. That means the accumulated
-     * {@link Matrix4f} isn't a pure rigid transform, so translation and rotation are pulled
-     * out with {@code getTranslation}/{@code getNormalizedRotation} (which is robust to a
-     * scaled matrix) rather than reading matrix columns directly. GeckoLib's own translate
-     * calls all divide by 16 (blocks, not the pixel units {@code ModelPart.x/y/z} use), so
-     * the extracted translation is multiplied back by 16 before being written.
+     * For a bone whose ancestry is {@code [right_arm, body]} (leaf first): walk root to leaf,
+     * doing {@code translateMatrixToBone; translate(pivot); rotateMatrixAroundBone;
+     * scaleMatrixForBone; translate(-pivot)} once per ancestor on the SAME scratch PoseStack,
+     * where {@code pivot} is {@code (0,0,0)} for the root and {@code b.getPivotX/Y/Z() -}
+     * the immediate parent's, for everyone else — GeckoLib's own (Bedrock-convention, X
+     * negated at bake) pivot values, not vanilla's. A bone with no parent (chain length 1)
+     * is left untouched — {@link #applyBoneIfPresent} already wrote the correct answer for it.
+     *
+     * <h3>The vanilla player mirror</h3>
+     * {@code RenderUtils} is GeckoLib's generic transform code — it has no idea it might be
+     * feeding a vanilla player model, which is rendered through an extra
+     * {@code scale(-1, -1, 1)} mirror that {@link #applyBoneIfPresent}'s proven sign
+     * conventions already account for. This has to be a full conjugation (mirror the frame,
+     * do the real work, un-mirror) — one call before the walk, one after — not a one-sided
+     * scale: rotations generally don't commute with the mirror, so mirroring only the input
+     * changes WHICH rotation gets extracted, not merely its sign. Confirmed against a
+     * single-bone case (body only, checked against {@link #applyBoneIfPresent}'s
+     * known-correct output) before applying it to the full walk.
+     *
+     * <h3>The rest-position baseline</h3>
+     * The walk computes a DELTA from rest (verified: all-zero rotation/position input
+     * produces exactly {@code (0,0,0)}). That delta needs to land on top of this bone's
+     * actual vanilla rest position — {@link SomniumBoneAnchors} is the same table
+     * {@code changeDirectionOnLook} already trusts for exactly this reason. Missing this
+     * previously meant every compounded arm/leg rendered bunched up near the origin instead
+     * of out at the shoulder/hip; head was unaffected only because its own rest pivot is
+     * {@code (0,0,0)}.
      *
      * <h3>A latent assumption worth knowing about</h3>
      * This overwrites (not adds to) each carried part's rotation and position with the
@@ -452,52 +508,57 @@ public final class SomniumCastBoneApplicator {
      * suppressing one of these parts, this method would need to preserve that vanilla
      * contribution instead of overwriting it.
      *
-     * <h3>Two corrections on top of calling GeckoLib's code (found via direct numeric
-     * verification against this exact rig, not guessed)</h3>
-     * <ol>
-     *     <li><b>The vanilla player mirror.</b> {@code RenderUtils} is GeckoLib's generic
-     *         transform code — it has no idea it might be feeding a vanilla player model,
-     *         which is rendered through an extra {@code scale(-1, -1, 1)} mirror that
-     *         {@link #applyBoneIfPresent}'s proven sign conventions already account for.
-     *         Calling {@code RenderUtils} verbatim without this produces a result mirrored
-     *         on X/Y relative to what vanilla expects — but it has to be a full
-     *         conjugation (mirror the frame, do the real work, un-mirror), not just a
-     *         one-sided scale before the walk starts. Position comes out identical either
-     *         way (a translation under a left-multiplied mirror is just the mirrored
-     *         vector, prepend-only is fine), but rotation is not: two rotations generally
-     *         don't commute with the mirror, only pure-Z ones do, so mirroring just the
-     *         input changes WHICH rotation gets extracted, not merely its sign. Confirmed
-     *         both the bug and the fix against a single-bone case (body only, checked
-     *         against {@link #applyBoneIfPresent}'s known-correct output) before this was
-     *         applied to the full multi-bone walk: prepend-only silently flipped the sign,
-     *         scaling by {@code (-1,-1,1)} again after the loop closes the conjugation and
-     *         matches exactly.</li>
-     *     <li><b>Pivot values are geo-model-absolute, not parent-relative.</b> Bedrock-format
-     *         pivots (what {@code bone.getPivotX/Y/Z} return) are absolute coordinates in
-     *         GeckoLib's own geometry space — e.g. body and head both sit at {@code [0,24,0]}
-     *         in {@code default_player.geo.json}, matching Blockbench's own numbers exactly.
-     *         Vanilla's {@code ModelPart} fields use a completely different origin (body and
-     *         head both rest at {@code 0}), and {@link #applyBoneIfPresent} never references
-     *         a bone's pivot for position at all — only its animated delta. Feeding
-     *         {@code RenderUtils.translateToPivotPoint} a bone's raw absolute pivot (as
-     *         {@code prepMatrixForBone} does internally) uses a 24-unit lever arm for a
-     *         rotation that should have none, which is exactly what direct numeric testing
-     *         against this data showed: a plausible few-pixel result for right_arm (pivot
-     *         meaningfully different from body's) alongside a wildly exaggerated 20+ pixel
-     *         swing for head specifically (pivot identical to body's) — confirmed as the
-     *         cause of the "head flying into the sky" screenshot. Fixed by not calling
-     *         {@code prepMatrixForBone} as one unit; the pivot translate/detranslate pair is
-     *         done by hand with the root bone's pivot treated as {@code (0,0,0)} and every
-     *         other bone's pivot expressed relative to its immediate parent's, while
-     *         {@code translateMatrixToBone}/{@code rotateMatrixAroundBone}/
-     *         {@code scaleMatrixForBone} — the parts that read animated keyframe data, not
-     *         static geometry — are still called from {@code RenderUtils} verbatim.</li>
-     * </ol>
+     * <h3>What's still unresolved</h3>
+     * Body's own position being confirmed correct (user report: "body is fixed") validated
+     * the body-position-channel history above up through including it in the walk. The
+     * grounding fix (applying it directly to body's own {@code ModelPart} too) is verified
+     * numerically (leg foot position lands within a pixel of true ground level) but not yet
+     * confirmed in-game. Head/arm position specifically was still reported as "not quite
+     * matching" even with body fixed — not yet root-caused; may be related to this same fix
+     * (arms compound through body the same way legs do) or may be a separate, remaining issue.
      */
     private static void applyBoneHierarchyCompound(BakedGeoModel bakedModel,
                                                    PlayerModel<?> playerModel,
                                                    CastAnimationOptions options) {
         if (!options.compoundBoneHierarchy()) return;
+
+        // Apply body's own position delta directly — applyBoneIfPresent (which already ran
+        // in applyAllBones, before this method) skips it entirely for the reason documented
+        // above, but that limitation doesn't apply here: this method's whole purpose is
+        // correctly carrying a bone's transform to its children, which is exactly what
+        // body's position needs. Applied once, here, not per-compounded-bone — body isn't
+        // itself one of COMPOUNDABLE_BONES. Uses applyBoneIfPresent's exact sign convention
+        // (-px, -py, +pz) for consistency with how every other bone's position is read.
+        Optional<GeoBone> bodyOpt = bakedModel.getBone("body");
+        if (bodyOpt.isPresent() && !bodyOpt.get().isHidden()) {
+            GeoBone bodyBone = bodyOpt.get();
+            ModelPart bodyPart = SomniumPlayerBoneMap.getPart(playerModel, "body");
+            if (bodyPart != null) {
+                // ── Diagnostic (temporary — remove once confirmed working) ──
+                // Captures bodyPart's x/y/z BEFORE this write, so a fresh log can confirm
+                // whether resetPose() actually left it at (0,0,0) at this point, as assumed —
+                // if applyBoneIfPresent or something else already left a nonzero value here,
+                // this addition would land on top of it instead of a clean baseline, which
+                // would explain a "body/arms offset, similar to before" symptom without any
+                // error in the compounding math itself (which the logged finalPos values for
+                // every other bone already confirm matches this exactly).
+                float beforeX = bodyPart.x, beforeY = bodyPart.y, beforeZ = bodyPart.z;
+
+                float bpx = bodyBone.getPosX();
+                float bpy = bodyBone.getPosY();
+                float bpz = bodyBone.getPosZ();
+                if (bpx != 0f) bodyPart.x -= bpx;
+                if (bpy != 0f) bodyPart.y -= bpy;
+                if (bpz != 0f) bodyPart.z += bpz;
+
+                if (probedAnim != null && probedAnim.contains("gear_second")) {
+                    System.out.println("[Somnium-DIAG] body direct position: anim=" + probedAnim
+                            + " before=(" + beforeX + ", " + beforeY + ", " + beforeZ + ")"
+                            + " bodyBone.pos=(" + bpx + ", " + bpy + ", " + bpz + ")"
+                            + " after=(" + bodyPart.x + ", " + bodyPart.y + ", " + bodyPart.z + ")");
+                }
+            }
+        }
 
         for (String boneName : COMPOUNDABLE_BONES) {
             Optional<GeoBone> opt = bakedModel.getBone(boneName);
@@ -522,8 +583,20 @@ public final class SomniumCastBoneApplicator {
 
             // The walk: GeckoLib's own per-bone animated transform, called once per ancestor —
             // but with the pivot translate/detranslate pair done by hand (root -> (0,0,0),
-            // everyone else -> relative to their immediate parent) instead of calling
-            // prepMatrixForBone as one unit. See this method's javadoc for why.
+            // everyone else -> relative to their immediate parent, using GeckoLib's OWN pivot
+            // values) instead of calling prepMatrixForBone as one unit.
+            //
+            // REVERTED here from a "clean forward-kinematics" rewrite (parent_pos +
+            // parent_rot*(vanilla_rest_offset + own_delta)) that looked more principled on
+            // paper but was missing a real term: this translate-to-pivot / rotate / translate-
+            // back structure lets the pivot offset get swept by the CHILD's own rotation, not
+            // just carried by the parent's — confirmed by direct calculation (a nonzero result
+            // from translate(-offset)->rotate(child's own rotation)->translate(offset) applied
+            // to the origin) — which the simplified formula silently dropped. Consequence,
+            // confirmed in-game: legs crossed to the wrong side and arms got worse, while head
+            // (whose offset is zero either way) looked unaffected — exactly the fingerprint of
+            // a missing offset-sweep term. Rotation is unaffected either way, hence why it kept
+            // testing as correct through both versions.
             PoseStack scratch = new PoseStack();
             scratch.scale(-1f, -1f, 1f); // establish the vanilla player mirror before anything else
             float prevPivotX = 0, prevPivotY = 0, prevPivotZ = 0;
@@ -538,6 +611,23 @@ public final class SomniumCastBoneApplicator {
                     pivotZ = b.getPivotZ() - prevPivotZ;
                 }
 
+                // applyBoneIfPresent (the plain, non-compounded path every other bone in this
+                // rig goes through) drops the "body" bone's position channel entirely —
+                // "if (!"body".equals(boneName))" guards the whole position block — with a
+                // documented rationale: there's no clean way to translate a root bone across
+                // vanilla's flat, non-hierarchical ModelPart tree without also carrying that
+                // translation to every child, which plain per-bone application can't do.
+                // That limitation predates this method; compounding IS the mechanism that
+                // carries a translation to children correctly, so it doesn't apply here.
+                // Confirmed numerically: body's authored -5.6-pixel Y keyframe is what keeps
+                // the legs grounded through a 45.5° forward lean — dropping it (an earlier
+                // version of this fix did, matching applyBoneIfPresent for consistency)
+                // left every carried bone floating about 0.3 blocks above where it should
+                // plant, because nothing was left to counteract the hips lifting as the
+                // rotation swept them. Body's position is included here, and applied
+                // directly to body's own ModelPart below (see after this loop) — bypassing
+                // applyBoneIfPresent's drop specifically for animations that opt into
+                // compounding, without touching that shared method at all.
                 RenderUtils.translateMatrixToBone(scratch, b);
                 scratch.translate(pivotX / 16f, pivotY / 16f, pivotZ / 16f);
                 RenderUtils.rotateMatrixAroundBone(scratch, b);
@@ -550,14 +640,9 @@ public final class SomniumCastBoneApplicator {
             }
             // Close the conjugation: scale(-1,-1,1) is its own inverse, so applying it again
             // here completes "mirror, do the real work, un-mirror" rather than leaving the
-            // walk permanently inside a mirrored frame. Skipping this step is what produced
-            // the "upside down" rotation in testing — mirroring only the input side changes
-            // WHICH rotation gets extracted, not just its sign, because rotations don't
-            // commute with the mirror in general (only pure-Z rotations do). Position is
-            // unaffected by this distinction — the translation column comes out identical
-            // either way — so this being missing was a rotation-only bug, confirmed by
-            // checking a single-bone case against applyBoneIfPresent's known-correct answer
-            // before shipping this fix.
+            // walk permanently inside a mirrored frame. EXACTLY ONE call here — a second one
+            // cancels the first (scale(-1,-1,1) twice is identity), which briefly reintroduced
+            // an upside-down bug earlier when a diagnostic snapshot was added carelessly.
             scratch.scale(-1f, -1f, 1f);
 
             Matrix4f finalPose = scratch.last().pose();
@@ -567,14 +652,10 @@ public final class SomniumCastBoneApplicator {
             worldRot.getEulerAnglesZYX(euler);
 
             // The walk above computes a DELTA from rest (verified: feeding it all-zero
-            // rotation/position input produces exactly (0,0,0) — confirmed numerically before
-            // this was written, not assumed). That delta needs to land on top of this specific
-            // bone's actual vanilla rest position, not at the origin — SomniumBoneAnchors is
-            // the same table changeDirectionOnLook already trusts for exactly this reason.
-            // Missing this previously meant every compounded arm/leg rendered bunched up near
-            // (0,0,0) instead of out at the shoulder/hip — head happened to look unaffected by
-            // this specific bug only because its own rest pivot is (0,0,0), so adding it was a
-            // no-op there, which is exactly why this went unnoticed until arms/legs were checked.
+            // rotation/position input produces exactly (0,0,0)). That delta needs to land on
+            // top of this specific bone's actual vanilla rest position, not at the origin —
+            // SomniumBoneAnchors is the same table changeDirectionOnLook already trusts for
+            // exactly this reason.
             float[] restPx = SomniumBoneAnchors.restPivot(boneName);
             part.x = restPx[0] * 16f + worldPos.x() * 16f;
             part.y = restPx[1] * 16f + worldPos.y() * 16f;

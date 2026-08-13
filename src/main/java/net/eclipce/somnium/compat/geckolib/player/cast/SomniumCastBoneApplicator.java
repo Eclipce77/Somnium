@@ -495,8 +495,8 @@ public final class SomniumCastBoneApplicator {
      * </ol>
      */
     private static void applyBoneHierarchyCompound(BakedGeoModel bakedModel,
-                                                   PlayerModel<?> playerModel,
-                                                   CastAnimationOptions options) {
+                                                    PlayerModel<?> playerModel,
+                                                    CastAnimationOptions options) {
         if (!options.compoundBoneHierarchy()) return;
 
         for (String boneName : COMPOUNDABLE_BONES) {
@@ -560,6 +560,14 @@ public final class SomniumCastBoneApplicator {
             // before shipping this fix.
             scratch.scale(-1f, -1f, 1f);
 
+            // Diagnostic snapshot BEFORE the closing mirror, so a divergence can be isolated
+            // to "before the walk finishes" vs "the closing conjugation / decomposition step" —
+            // see the quaternion component logging below.
+            Matrix4f preCloseMirrorPose = new Matrix4f(scratch.last().pose());
+            Quaternionf preCloseMirrorRot = preCloseMirrorPose.getNormalizedRotation(new Quaternionf());
+
+            scratch.scale(-1f, -1f, 1f);
+
             Matrix4f finalPose = scratch.last().pose();
             Vector3f worldPos = finalPose.getTranslation(new Vector3f());
             Quaternionf worldRot = finalPose.getNormalizedRotation(new Quaternionf());
@@ -591,6 +599,12 @@ public final class SomniumCastBoneApplicator {
                         + " finalPos=(" + part.x + ", " + part.y + ", " + part.z + ")"
                         + " finalRotDeg=(" + Math.toDegrees(part.xRot) + ", "
                         + Math.toDegrees(part.yRot) + ", " + Math.toDegrees(part.zRot) + ")");
+                System.out.println("[Somnium-DIAG] quat: anim=" + probedAnim
+                        + " bone=" + boneName
+                        + " preCloseMirror(x,y,z,w)=(" + preCloseMirrorRot.x() + ", " + preCloseMirrorRot.y()
+                        + ", " + preCloseMirrorRot.z() + ", " + preCloseMirrorRot.w() + ")"
+                        + " final(x,y,z,w)=(" + worldRot.x() + ", " + worldRot.y()
+                        + ", " + worldRot.z() + ", " + worldRot.w() + ")");
             }
         }
     }

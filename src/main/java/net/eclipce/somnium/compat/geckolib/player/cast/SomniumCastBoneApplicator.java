@@ -548,24 +548,24 @@ public final class SomniumCastBoneApplicator {
                 prevPivotY = b.getPivotY();
                 prevPivotZ = b.getPivotZ();
             }
-            // Close the conjugation: scale(-1,-1,1) is its own inverse, so applying it again
-            // here completes "mirror, do the real work, un-mirror" rather than leaving the
-            // walk permanently inside a mirrored frame. Skipping this step is what produced
-            // the "upside down" rotation in testing — mirroring only the input side changes
-            // WHICH rotation gets extracted, not just its sign, because rotations don't
-            // commute with the mirror in general (only pure-Z rotations do). Position is
-            // unaffected by this distinction — the translation column comes out identical
-            // either way — so this being missing was a rotation-only bug, confirmed by
-            // checking a single-bone case against applyBoneIfPresent's known-correct answer
-            // before shipping this fix.
-            scratch.scale(-1f, -1f, 1f);
-
             // Diagnostic snapshot BEFORE the closing mirror, so a divergence can be isolated
             // to "before the walk finishes" vs "the closing conjugation / decomposition step" —
             // see the quaternion component logging below.
             Matrix4f preCloseMirrorPose = new Matrix4f(scratch.last().pose());
             Quaternionf preCloseMirrorRot = preCloseMirrorPose.getNormalizedRotation(new Quaternionf());
 
+            // Close the conjugation: scale(-1,-1,1) is its own inverse, so applying it again
+            // here completes "mirror, do the real work, un-mirror" rather than leaving the
+            // walk permanently inside a mirrored frame. Skipping this step is what produced
+            // the "upside down" rotation in earlier testing — mirroring only the input side
+            // changes WHICH rotation gets extracted, not just its sign, because rotations
+            // don't commute with the mirror in general (only pure-Z rotations do). Position
+            // is unaffected by this distinction — the translation column comes out identical
+            // either way — so this being missing was a rotation-only bug, confirmed by
+            // checking a single-bone case against applyBoneIfPresent's known-correct answer
+            // before shipping this fix. EXACTLY ONE call here — a second one cancels the
+            // first (scale(-1,-1,1) twice is identity), which is what briefly reintroduced
+            // the upside-down bug when the diagnostic snapshot above was added.
             scratch.scale(-1f, -1f, 1f);
 
             Matrix4f finalPose = scratch.last().pose();

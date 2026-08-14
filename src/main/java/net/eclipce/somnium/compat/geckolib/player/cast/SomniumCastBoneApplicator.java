@@ -534,10 +534,14 @@ public final class SomniumCastBoneApplicator {
         // body's position needs. Applied once, here, not per-compounded-bone — body isn't
         // itself one of COMPOUNDABLE_BONES. Uses applyBoneIfPresent's exact sign convention
         // (-px, -py, +pz) for consistency with how every other bone's position is read.
+        //
+        // Declared at method scope (not just inside the block below) so the arm forward/back
+        // safeguard further down can reference body's final Z as a trusted reference point.
+        ModelPart bodyPart = null;
         Optional<GeoBone> bodyOpt = bakedModel.getBone("body");
         if (bodyOpt.isPresent() && !bodyOpt.get().isHidden()) {
             GeoBone bodyBone = bodyOpt.get();
-            ModelPart bodyPart = SomniumPlayerBoneMap.getPart(playerModel, "body");
+            bodyPart = SomniumPlayerBoneMap.getPart(playerModel, "body");
             if (bodyPart != null) {
                 // ── Diagnostic (temporary — remove once confirmed working) ──
                 // Captures bodyPart's x/y/z BEFORE this write, so a fresh log can confirm
@@ -721,34 +725,72 @@ public final class SomniumCastBoneApplicator {
         // limbs visually merging — can't happen, for this animation or any future one that
         // uses compoundBoneHierarchy.
         //
+        // Y-AXIS ONLY, not the full 3D vector between the two parts (an earlier version of
+        // this pushed along the full vector). Direct in-game comparison against Blockbench
+        // found X and Z were already correct for the colliding case here — the push was
+        // dragging them off too, along with Y, because the vector between the two parts isn't
+        // purely vertical. Restricting the correction to Y only fixes exactly the axis that
+        // needed it and leaves the two axes that didn't alone.
+        //
         // Only ever nudges the ARM, never the leg: legs determine where the character plants
         // on the ground, which is independently confirmed correct, so they're left untouched.
-        // The push is along the actual line between the two parts (not a fixed axis), applied
-        // only when they're already closer than the minimum, so it's a no-op for every
-        // ordinary pose and only engages for the specific failure case it exists to catch.
-        nudgeApartIfTooClose(rightArmPart, rightLegPart);
-        nudgeApartIfTooClose(leftArmPart, leftLegPart);
+        nudgeApartVerticallyIfTooClose(rightArmPart, rightLegPart);
+        nudgeApartVerticallyIfTooClose(leftArmPart, leftLegPart);
+
+        // ── Arm forward/back safeguard, relative to body ──
+        //
+        // Same rationale as the limb-collision safeguard above, for a different symptom
+        // found by the same kind of direct comparison: an arm ending up noticeably further
+        // "behind" (larger Z) than body's own Z is never an intended pose either — a limb
+        // trailing far behind the torso it's attached to reads as visibly wrong the same way
+        // a limb overlapping a leg does. Body's own Z is trusted as the reference point since
+        // it's computed independently of this compounding walk (via applyBoneIfPresent) and
+        // has been separately confirmed correct. Only pulls an arm FORWARD (toward body's Z)
+        // when it's fallen behind by more than the allowed margin — never pushes it further
+        // back, and never touches an arm that's already at or in front of that line.
+        // Scoped to right_arm only, not both arms: right_arm and left_arm are almost equally
+        // far behind body's Z here (about 3.9px each), so a shared distance-based rule can't
+        // tell them apart — but direct comparison against Blockbench confirmed left_arm's Z
+        // was already correct while right_arm's specifically needed to move forward. Applying
+        // this to both would have moved left_arm's already-right Z to fix right_arm's wrong
+        // one. If a future animation shows the same symptom on left_arm too, the same kind of
+        // targeted call can be added for it then — this is deliberately not a general
+        // "both arms" rule because the evidence available doesn't support one being correct.
+        pullForwardIfTooFarBehind(rightArmPart, bodyPart);
     }
 
-    /** Minimum allowed distance (pixels) between a same-side arm and leg's pivots before the
-     *  arm gets pushed back out. 6px is a bit under half an arm's own width (4px) plus half a
-     *  leg's own width (4px) — enough that the two boxes can get close/overlapping-looking
-     *  without being flagged, but not so close that they're rendering on top of each other. */
-    private static final float MIN_LIMB_SEPARATION_PX = 6f;
+    /** Minimum allowed VERTICAL (Y-axis) distance in pixels between a same-side arm and leg's
+     *  pivots before the arm gets nudged. Deliberately smaller than the width-based reasoning
+     *  a full-3D-distance threshold would use, since this is now a single-axis correction, not
+     *  a 3D one — the goal is just enough separation that the two boxes read as distinct
+     *  vertically, not a hard collision margin. */
+    private static final float MIN_LIMB_Y_SEPARATION_PX = 4f;
 
-    private static void nudgeApartIfTooClose(ModelPart armPart, ModelPart legPart) {
+    private static void nudgeApartVerticallyIfTooClose(ModelPart armPart, ModelPart legPart) {
         if (armPart == null || legPart == null) return;
 
-        float dx = armPart.x - legPart.x;
         float dy = armPart.y - legPart.y;
-        float dz = armPart.z - legPart.z;
-        float dist = (float) Math.sqrt(dx * dx + dy * dy + dz * dz);
-        if (dist >= MIN_LIMB_SEPARATION_PX || dist < 1e-4f) return; // already fine, or coincident (can't get a direction)
+        float absDy = Math.abs(dy);
+        if (absDy >= MIN_LIMB_Y_SEPARATION_PX) return; // already fine
 
-        float push = (MIN_LIMB_SEPARATION_PX - dist);
-        armPart.x += dx / dist * push;
-        armPart.y += dy / dist * push;
-        armPart.z += dz / dist * push;
+        float sign = dy >= 0 ? 1f : -1f;
+        // if dy is exactly 0 (coincident on this axis), pick "arm above leg" as the default
+        // push direction — arms sit higher than legs in every rest pose this rig has.
+        if (dy == 0f) sign = -1f;
+        armPart.y = legPart.y + sign * MIN_LIMB_Y_SEPARATION_PX;
+    }
+
+    /** How far behind (larger Z) body's own Z an arm is allowed to fall before being pulled
+     *  forward. Kept small and only ever pulls forward, never pushes back, so it can't fight
+     *  against an animation that genuinely wants an arm swung behind the body. Currently only
+     *  called for right_arm — see the call site for why this isn't applied to both arms. */
+    private static final float MAX_ARM_BEHIND_BODY_PX = 2f;
+
+    private static void pullForwardIfTooFarBehind(ModelPart armPart, ModelPart bodyPartRef) {
+        if (armPart == null || bodyPartRef == null) return;
+        float behindBy = armPart.z - bodyPartRef.z;
+        if (behindBy <= MAX_ARM_BEHIND_BODY_PX) return; // already at, in front of, or within the margin
+        armPart.z = bodyPartRef.z + MAX_ARM_BEHIND_BODY_PX;
     }
 
     /**

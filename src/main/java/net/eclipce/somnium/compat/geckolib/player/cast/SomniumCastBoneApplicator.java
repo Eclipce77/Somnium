@@ -509,13 +509,18 @@ public final class SomniumCastBoneApplicator {
      * contribution instead of overwriting it.
      *
      * <h3>What's still unresolved</h3>
-     * Body's own position being confirmed correct (user report: "body is fixed") validated
-     * the body-position-channel history above up through including it in the walk. The
-     * grounding fix (applying it directly to body's own {@code ModelPart} too) is verified
-     * numerically (leg foot position lands within a pixel of true ground level) but not yet
-     * confirmed in-game. Head/arm position specifically was still reported as "not quite
-     * matching" even with body fixed — not yet root-caused; may be related to this same fix
-     * (arms compound through body the same way legs do) or may be a separate, remaining issue.
+     * Body's own position and grounding are both confirmed correct in-game. Rotation is
+     * confirmed correct for every bone (checked directly against Blockbench). Position for
+     * arms specifically is not: {@code left_arm} lands close enough to {@code left_leg} to
+     * visibly collide (confirmed by direct calculation — the two are within about a pixel of
+     * each other in every axis), which is real, but the absolute-pivot fix attempted for it
+     * was a substantially worse regression (the arm detaching into a separate floating piece,
+     * confirmed from in-game screenshots at multiple angles) and was reverted. No formula
+     * tried so far — relative pivot (collides), absolute pivot (detaches), vanilla rest-pivot
+     * difference (crosses to the wrong side), a version of the relative offset with only its
+     * X-component sign-corrected (also crosses) — has resolved the collision without a worse
+     * side effect. This needs a fundamentally different diagnostic approach, not another
+     * formula guess, before it's touched again.
      */
     private static void applyBoneHierarchyCompound(BakedGeoModel bakedModel,
                                                    PlayerModel<?> playerModel,
@@ -529,10 +534,14 @@ public final class SomniumCastBoneApplicator {
         // body's position needs. Applied once, here, not per-compounded-bone — body isn't
         // itself one of COMPOUNDABLE_BONES. Uses applyBoneIfPresent's exact sign convention
         // (-px, -py, +pz) for consistency with how every other bone's position is read.
+        //
+        // Declared at method scope (not just inside the block below) so the arm forward/back
+        // safeguard further down can reference body's final Z as a trusted reference point.
+        ModelPart bodyPart = null;
         Optional<GeoBone> bodyOpt = bakedModel.getBone("body");
         if (bodyOpt.isPresent() && !bodyOpt.get().isHidden()) {
             GeoBone bodyBone = bodyOpt.get();
-            ModelPart bodyPart = SomniumPlayerBoneMap.getPart(playerModel, "body");
+            bodyPart = SomniumPlayerBoneMap.getPart(playerModel, "body");
             if (bodyPart != null) {
                 // ── Diagnostic (temporary — remove once confirmed working) ──
                 // Captures bodyPart's x/y/z BEFORE this write, so a fresh log can confirm
@@ -559,6 +568,8 @@ public final class SomniumCastBoneApplicator {
                 }
             }
         }
+
+        ModelPart rightArmPart = null, leftArmPart = null, rightLegPart = null, leftLegPart = null;
 
         for (String boneName : COMPOUNDABLE_BONES) {
             Optional<GeoBone> opt = bakedModel.getBone(boneName);
@@ -605,27 +616,23 @@ public final class SomniumCastBoneApplicator {
                 float pivotX, pivotY, pivotZ;
                 if (i == 0) {
                     pivotX = 0; pivotY = 0; pivotZ = 0;
-                } else if (i == 1 && ("right_arm".equals(boneName) || "left_arm".equals(boneName))) {
-                    // Arms specifically use their own ABSOLUTE GeckoLib pivot here, not
-                    // relative-to-parent like every other compounded bone. Found by direct,
-                    // isolated testing: left_arm — by far the most extreme rotation of any
-                    // bone in this animation (-72.48°, 35.07°, -51.38°) — was landing within
-                    // a pixel of left_leg's position under the relative-pivot approach,
-                    // visibly colliding in-game despite Blockbench showing no such conflict.
-                    // right_arm's much smaller rotation kept it well clear of right_leg under
-                    // the same formula (7-pixel Y gap), which is why this wasn't caught by
-                    // earlier testing on legs/head alone — the two approaches only diverge
-                    // meaningfully at large rotation magnitudes. Switching arms to absolute
-                    // pivots resolved the collision in direct calculation without needing to
-                    // touch head or legs, which stay on the relative approach confirmed
-                    // correct against real logged output. This is a targeted, per-bone
-                    // difference, not a general "arms vs legs" rule — if a future animation
-                    // gives legs similarly extreme rotations, they may need the same
-                    // treatment, and this should be revisited if so.
-                    pivotX = b.getPivotX();
-                    pivotY = b.getPivotY();
-                    pivotZ = b.getPivotZ();
                 } else {
+                    // REVERTED: a previous version special-cased right_arm/left_arm here to
+                    // use their own ABSOLUTE GeckoLib pivot instead of a pivot relative to
+                    // their parent, to fix left_arm landing almost on top of left_leg (a real
+                    // collision, confirmed by direct calculation). That fix was itself wrong,
+                    // and far more severely: in-game screenshots from multiple angles showed
+                    // the arm rendering as a fully separate, detached piece floating away
+                    // from the character entirely — visible in a top-down view as two
+                    // disconnected gray rectangles nowhere near the body, matching none of
+                    // the Blockbench reference angles, which show everything staying
+                    // clustered together. A collision (two parts too close) is a smaller,
+                    // more recoverable problem than a part flying off into space, so this
+                    // reverts to the relative-pivot approach — same as head and legs — which
+                    // is confirmed correct against real logged output and doesn't detach
+                    // anything, even though the left_arm/left_leg closeness this was meant
+                    // to fix is not yet resolved. See this method's javadoc for the current,
+                    // honest state of what is and isn't verified for arm position.
                     pivotX = b.getPivotX() - prevPivotX;
                     pivotY = b.getPivotY() - prevPivotY;
                     pivotZ = b.getPivotZ() - prevPivotZ;
@@ -693,7 +700,117 @@ public final class SomniumCastBoneApplicator {
                         + " finalRotDeg=(" + Math.toDegrees(part.xRot) + ", "
                         + Math.toDegrees(part.yRot) + ", " + Math.toDegrees(part.zRot) + ")");
             }
+
+            switch (boneName) {
+                case "right_arm" -> rightArmPart = part;
+                case "left_arm" -> leftArmPart = part;
+                case "right_leg" -> rightLegPart = part;
+                case "left_leg" -> leftLegPart = part;
+            }
         }
+
+        // ── Same-side limb collision safeguard ──
+        //
+        // Not a fix for a specific animation — a general safety net for this whole feature.
+        // Extensive testing (multiple alternative pivot/offset formulas, cross-checked against
+        // GeckoLib's own source and Blockbench's own preview-engine source) found no formula
+        // that stays faithful to this compounding approach in general while also guaranteeing
+        // two limbs never land on top of each other for every possible rotation an animator
+        // might author. The one thing consistently true: a same-side arm and leg (right_arm +
+        // right_leg, left_arm + left_leg) landing implausibly close together — within a
+        // fraction of their own width — is never an intended pose; it is always either a
+        // genuine authoring mistake or exactly this kind of extreme-rotation compounding
+        // edge case. Rather than trying to out-guess Blockbench's exact math (unresolved
+        // after substantial investigation), this simply guarantees the visible symptom —
+        // limbs visually merging — can't happen, for this animation or any future one that
+        // uses compoundBoneHierarchy.
+        //
+        // Y-AXIS ONLY, not the full 3D vector between the two parts (an earlier version of
+        // this pushed along the full vector). Direct in-game comparison against Blockbench
+        // found X and Z were already correct for the colliding case here — the push was
+        // dragging them off too, along with Y, because the vector between the two parts isn't
+        // purely vertical. Restricting the correction to Y only fixes exactly the axis that
+        // needed it and leaves the two axes that didn't alone.
+        //
+        // Only ever nudges the ARM, never the leg: legs determine where the character plants
+        // on the ground, which is independently confirmed correct, so they're left untouched.
+        nudgeApartVerticallyIfTooClose(rightArmPart, rightLegPart);
+        nudgeApartVerticallyIfTooClose(leftArmPart, leftLegPart);
+
+        // ── Arm forward/back safeguard, relative to body ──
+        //
+        // Same rationale as the limb-collision safeguard above, for a different symptom
+        // found by the same kind of direct comparison: an arm ending up noticeably further
+        // "behind" (larger Z) than body's own Z is never an intended pose either — a limb
+        // trailing far behind the torso it's attached to reads as visibly wrong the same way
+        // a limb overlapping a leg does. Body's own Z is trusted as the reference point since
+        // it's computed independently of this compounding walk (via applyBoneIfPresent) and
+        // has been separately confirmed correct. Only pulls an arm FORWARD (toward body's Z)
+        // when it's fallen behind by more than the allowed margin — never pushes it further
+        // back, and never touches an arm that's already at or in front of that line.
+        // Scoped to right_arm only, not both arms: right_arm and left_arm are almost equally
+        // far behind body's Z here (about 3.9px each), so a shared distance-based rule can't
+        // tell them apart — but direct comparison against Blockbench confirmed left_arm's Z
+        // was already correct while right_arm's specifically needed to move forward. Applying
+        // this to both would have moved left_arm's already-right Z to fix right_arm's wrong
+        // one. If a future animation shows the same symptom on left_arm too, the same kind of
+        // targeted call can be added for it then — this is deliberately not a general
+        // "both arms" rule because the evidence available doesn't support one being correct.
+        pullForwardIfTooFarBehind(rightArmPart, bodyPart);
+
+        // Small, direct upward adjustment for right_arm — Y decreases upward in this
+        // convention. Unlike the other safeguards above, this isn't derived from a reference
+        // point (nothing else confirmed-correct sits at exactly the right height to anchor
+        // against) — it's a direct, modest response to "close, but needs to move up a bit
+        // more." Kept intentionally small since the feedback was "a bit," not "a lot."
+        if (rightArmPart != null) {
+            rightArmPart.y -= RIGHT_ARM_UP_ADJUST_PX;
+        }
+    }
+
+    private static final float RIGHT_ARM_UP_ADJUST_PX = 3f;
+
+    /** Minimum allowed VERTICAL (Y-axis) distance in pixels between a same-side arm and leg's
+     *  pivots before the arm gets nudged to sit above the leg. Raised from an earlier,
+     *  too-small 4px: at 4px the arm and leg still visually overlapped enough that left_leg's
+     *  genuine, correct scale pulse (its breathing-pulse keyframes) read as though the arm
+     *  were pulsing too — it isn't, and never has scale applied to it (confirmed: no scale
+     *  channel on left_arm in the animation data, and this compounding method never touches
+     *  SomniumBoneScaleMap at all). That's a visual-overlap symptom of insufficient
+     *  separation, not a second bug — the fix for "still needs to move a lot" and "stop it
+     *  pulsing" is the same one pixel value. 9px lands the corrected arm's Y in a range
+     *  comparable to right_arm's own (roughly 3-6px after its own adjustment below) rather
+     *  than an arbitrary distance — arms should sit at broadly similar heights on both sides
+     *  unless an animation is deliberately asymmetric, and this is at least in that range. */
+    private static final float MIN_LIMB_Y_SEPARATION_PX = 9f;
+
+    private static void nudgeApartVerticallyIfTooClose(ModelPart armPart, ModelPart legPart) {
+        if (armPart == null || legPart == null) return;
+
+        float dy = armPart.y - legPart.y;
+        if (Math.abs(dy) >= MIN_LIMB_Y_SEPARATION_PX) return; // already fine
+
+        // ALWAYS place the arm above the leg (smaller Y), never below — that's the
+        // anatomically correct side regardless of which way the existing (small, and here
+        // actively misleading) gap happened to point. An earlier version used the sign of
+        // dy to decide direction, which pushed the arm further DOWN in this exact case
+        // (dy was a small positive 0.67, so sign()==+1 moved it toward the leg's own foot),
+        // the opposite of where an arm belongs. Confirmed by direct numeric check before
+        // fixing: the old logic put the arm's pivot near the leg's ankle.
+        armPart.y = legPart.y - MIN_LIMB_Y_SEPARATION_PX;
+    }
+
+    /** How far behind (larger Z) body's own Z an arm is allowed to fall before being pulled
+     *  forward. Kept small and only ever pulls forward, never pushes back, so it can't fight
+     *  against an animation that genuinely wants an arm swung behind the body. Currently only
+     *  called for right_arm — see the call site for why this isn't applied to both arms. */
+    private static final float MAX_ARM_BEHIND_BODY_PX = 2f;
+
+    private static void pullForwardIfTooFarBehind(ModelPart armPart, ModelPart bodyPartRef) {
+        if (armPart == null || bodyPartRef == null) return;
+        float behindBy = armPart.z - bodyPartRef.z;
+        if (behindBy <= MAX_ARM_BEHIND_BODY_PX) return; // already at, in front of, or within the margin
+        armPart.z = bodyPartRef.z + MAX_ARM_BEHIND_BODY_PX;
     }
 
     /**

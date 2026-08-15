@@ -733,9 +733,46 @@ public final class SomniumCastBoneApplicator {
         // needed it and leaves the two axes that didn't alone.
         //
         // Only ever nudges the ARM, never the leg: legs determine where the character plants
-        // on the ground, which is independently confirmed correct, so they're left untouched.
-        nudgeApartVerticallyIfTooClose(rightArmPart, rightLegPart);
-        nudgeApartVerticallyIfTooClose(leftArmPart, leftLegPart);
+        // ── Same-side limb collision safeguard — REMOVED for the Y axis ──
+        //
+        // An earlier version of this pushed left_arm and right_arm apart from their same-side
+        // leg along the Y axis specifically. Direct feedback after testing: this was wrong for
+        // left_arm — "completely wrong," needing to move toward center instead, i.e. the X
+        // axis, not Y. Removed entirely rather than left in a half-correct state; see the
+        // X-axis correction below for what actually fixes left_arm's position, and the
+        // Z-axis (forward/back) correction further down for right_arm.
+
+        // ── Left arm: move toward center (X axis) ──
+        //
+        // Direct feedback: left_arm needed to move from its original compounded position
+        // closer to center (smaller |X|), not vertically — the "except the vertical axis"
+        // feedback that led to the Y-axis safeguard above was apparently about something
+        // other than what that safeguard corrected, and pushing Y made things worse, not
+        // better ("completely wrong"). This pulls left_arm's X toward 0 by a fixed fraction,
+        // only ever pulling inward (toward center), never pushing outward, so it can't fight
+        // an animation that genuinely wants the arm held out wide. Kept as a fraction of the
+        // arm's own X rather than a fixed pixel offset so it scales sensibly if a future
+        // animation's compounded arm X differs substantially from this one's.
+        pullTowardCenterX(leftArmPart);
+
+        // ── Left arm: guarantee no scale is ever applied, regardless of position ──
+        //
+        // Direct feedback: left_arm must never visually pulse — only left_leg should. Traced
+        // this earlier: left_arm has no scale channel in the source animation data, and this
+        // compounding method never writes to SomniumBoneScaleMap for any of the five
+        // compounded bones (confirmed by re-reading this whole method — the only scale writer
+        // touching these parts is applyBoneIfPresent, which reads each bone's OWN scale
+        // channel independently, and left_arm's own channel is identity). The working theory
+        // was that left_arm sitting too close to the genuinely-pulsing left_leg made it LOOK
+        // like both were pulsing, which is why the position fix was expected to also fix this.
+        // If the pulsing is still visible after this message's position correction, that
+        // theory needs to be reconsidered — but there is no cost to being certain either way:
+        // explicitly clearing any scale entry for left_arm's part here is a no-op if none was
+        // ever registered (which every trace so far says is the case), and a hard guarantee
+        // if something is registering one through a path not yet found.
+        if (leftArmPart != null) {
+            SomniumBoneScaleMap.removeFor(leftArmPart);
+        }
 
         // ── Arm forward/back safeguard, relative to body ──
         //
@@ -756,55 +793,36 @@ public final class SomniumCastBoneApplicator {
         // one. If a future animation shows the same symptom on left_arm too, the same kind of
         // targeted call can be added for it then — this is deliberately not a general
         // "both arms" rule because the evidence available doesn't support one being correct.
+        //
+        // The margin was widened this message: the earlier, smaller margin's correction
+        // wasn't enough — the previous message's feedback ("close, but needs to move up a bit
+        // more") was misread as a Y-axis request, when it meant more forward/toward-camera
+        // movement (the F5 third-person camera view) on the SAME Z axis this safeguard
+        // already handles. The Y-axis change from that misreading is removed below; this
+        // margin is tightened instead, which is the correct axis for the actual request.
         pullForwardIfTooFarBehind(rightArmPart, bodyPart);
-
-        // Small, direct upward adjustment for right_arm — Y decreases upward in this
-        // convention. Unlike the other safeguards above, this isn't derived from a reference
-        // point (nothing else confirmed-correct sits at exactly the right height to anchor
-        // against) — it's a direct, modest response to "close, but needs to move up a bit
-        // more." Kept intentionally small since the feedback was "a bit," not "a lot."
-        if (rightArmPart != null) {
-            rightArmPart.y -= RIGHT_ARM_UP_ADJUST_PX;
-        }
     }
 
-    private static final float RIGHT_ARM_UP_ADJUST_PX = 3f;
+    /** Fraction of left_arm's compounded X pulled back toward 0 (center) when it's on the
+     *  wrong side or too far out. 0.4 was chosen as a moderate first correction — enough to
+     *  be a clearly visible change without assuming the exact target distance, since no
+     *  formula tested so far has produced a position independently confirmed correct on this
+     *  axis to anchor a precise value against. */
+    private static final float LEFT_ARM_CENTER_PULL_FRACTION = 0.4f;
 
-    /** Minimum allowed VERTICAL (Y-axis) distance in pixels between a same-side arm and leg's
-     *  pivots before the arm gets nudged to sit above the leg. Raised from an earlier,
-     *  too-small 4px: at 4px the arm and leg still visually overlapped enough that left_leg's
-     *  genuine, correct scale pulse (its breathing-pulse keyframes) read as though the arm
-     *  were pulsing too — it isn't, and never has scale applied to it (confirmed: no scale
-     *  channel on left_arm in the animation data, and this compounding method never touches
-     *  SomniumBoneScaleMap at all). That's a visual-overlap symptom of insufficient
-     *  separation, not a second bug — the fix for "still needs to move a lot" and "stop it
-     *  pulsing" is the same one pixel value. 9px lands the corrected arm's Y in a range
-     *  comparable to right_arm's own (roughly 3-6px after its own adjustment below) rather
-     *  than an arbitrary distance — arms should sit at broadly similar heights on both sides
-     *  unless an animation is deliberately asymmetric, and this is at least in that range. */
-    private static final float MIN_LIMB_Y_SEPARATION_PX = 9f;
-
-    private static void nudgeApartVerticallyIfTooClose(ModelPart armPart, ModelPart legPart) {
-        if (armPart == null || legPart == null) return;
-
-        float dy = armPart.y - legPart.y;
-        if (Math.abs(dy) >= MIN_LIMB_Y_SEPARATION_PX) return; // already fine
-
-        // ALWAYS place the arm above the leg (smaller Y), never below — that's the
-        // anatomically correct side regardless of which way the existing (small, and here
-        // actively misleading) gap happened to point. An earlier version used the sign of
-        // dy to decide direction, which pushed the arm further DOWN in this exact case
-        // (dy was a small positive 0.67, so sign()==+1 moved it toward the leg's own foot),
-        // the opposite of where an arm belongs. Confirmed by direct numeric check before
-        // fixing: the old logic put the arm's pivot near the leg's ankle.
-        armPart.y = legPart.y - MIN_LIMB_Y_SEPARATION_PX;
+    private static void pullTowardCenterX(ModelPart leftArmPart) {
+        if (leftArmPart == null) return;
+        leftArmPart.x -= leftArmPart.x * LEFT_ARM_CENTER_PULL_FRACTION;
     }
 
     /** How far behind (larger Z) body's own Z an arm is allowed to fall before being pulled
-     *  forward. Kept small and only ever pulls forward, never pushes back, so it can't fight
-     *  against an animation that genuinely wants an arm swung behind the body. Currently only
-     *  called for right_arm — see the call site for why this isn't applied to both arms. */
-    private static final float MAX_ARM_BEHIND_BODY_PX = 2f;
+     *  forward. Only ever pulls forward, never pushes back, so it can't fight against an
+     *  animation that genuinely wants an arm swung behind the body. Currently only called for
+     *  right_arm — see the call site for why this isn't applied to both arms. Tightened this
+     *  message from an earlier, too-loose 2px: that margin wasn't pulling right_arm forward
+     *  enough — direct feedback was it still needed more forward/toward-camera movement after
+     *  the 2px version was applied. */
+    private static final float MAX_ARM_BEHIND_BODY_PX = -3f;
 
     private static void pullForwardIfTooFarBehind(ModelPart armPart, ModelPart bodyPartRef) {
         if (armPart == null || bodyPartRef == null) return;

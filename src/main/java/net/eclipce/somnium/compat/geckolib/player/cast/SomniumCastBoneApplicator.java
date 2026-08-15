@@ -785,22 +785,23 @@ public final class SomniumCastBoneApplicator {
         // has been separately confirmed correct. Only pulls an arm FORWARD (toward body's Z)
         // when it's fallen behind by more than the allowed margin — never pushes it further
         // back, and never touches an arm that's already at or in front of that line.
-        // Scoped to right_arm only, not both arms: right_arm and left_arm are almost equally
-        // far behind body's Z here (about 3.9px each), so a shared distance-based rule can't
-        // tell them apart — but direct comparison against Blockbench confirmed left_arm's Z
-        // was already correct while right_arm's specifically needed to move forward. Applying
-        // this to both would have moved left_arm's already-right Z to fix right_arm's wrong
-        // one. If a future animation shows the same symptom on left_arm too, the same kind of
-        // targeted call can be added for it then — this is deliberately not a general
-        // "both arms" rule because the evidence available doesn't support one being correct.
         //
-        // The margin was widened this message: the earlier, smaller margin's correction
-        // wasn't enough — the previous message's feedback ("close, but needs to move up a bit
-        // more") was misread as a Y-axis request, when it meant more forward/toward-camera
-        // movement (the F5 third-person camera view) on the SAME Z axis this safeguard
-        // already handles. The Y-axis change from that misreading is removed below; this
-        // margin is tightened instead, which is the correct axis for the actual request.
+        // Now applied to BOTH arms, not just right_arm. An earlier version scoped this to
+        // right_arm only, reasoning that left_arm's Z was already confirmed correct — that
+        // reasoning is now directly contradicted: this message's feedback is explicitly
+        // "[left_arm] needs to be pulled more forward," so left_arm needs the same kind of
+        // correction after all, not a different one.
+        //
+        // The margin itself has a real calibration history worth keeping visible, since it
+        // shows the target is bracketed, not guessed once: at margin=2px, right_arm landed at
+        // z=+1.0 and was reported "close, but needs to move up a bit more" (later clarified:
+        // that meant more forward, not vertical). At margin=-3px, right_arm landed at z=-4.0
+        // and was reported "pulled too far forward." The true target sits between those two,
+        // closer to the +1.0 end since that one was already "close" — margin=0.5px lands
+        // right_arm at z=-0.5, a modest step past the close point rather than the large,
+        // overshooting jump the -3px version made.
         pullForwardIfTooFarBehind(rightArmPart, bodyPart);
+        pullForwardIfTooFarBehind(leftArmPart, bodyPart);
     }
 
     /** Fraction of left_arm's compounded X pulled back toward 0 (center) when it's on the
@@ -817,12 +818,16 @@ public final class SomniumCastBoneApplicator {
 
     /** How far behind (larger Z) body's own Z an arm is allowed to fall before being pulled
      *  forward. Only ever pulls forward, never pushes back, so it can't fight against an
-     *  animation that genuinely wants an arm swung behind the body. Currently only called for
-     *  right_arm — see the call site for why this isn't applied to both arms. Tightened this
-     *  message from an earlier, too-loose 2px: that margin wasn't pulling right_arm forward
-     *  enough — direct feedback was it still needed more forward/toward-camera movement after
-     *  the 2px version was applied. */
-    private static final float MAX_ARM_BEHIND_BODY_PX = -3f;
+     *  animation that genuinely wants an arm swung behind the body.
+     *
+     *  <p>Recalibrated from a bracketing pair of data points, not guessed once: margin=2px put
+     *  right_arm at z=+1.0, reported "close, but needs to move a bit more forward." margin=-3px
+     *  put it at z=-4.0, reported "pulled too far forward." The true value sits between those,
+     *  closer to the +1.0 end since that one was already close — 0.5px lands right_arm at
+     *  z=-0.5, a modest step past the close point instead of the large overshoot -3px made.
+     *  Now applied to left_arm too (previously right_arm only) since direct feedback
+     *  contradicted the earlier assumption that left_arm's Z didn't need this correction. */
+    private static final float MAX_ARM_BEHIND_BODY_PX = 0.5f;
 
     private static void pullForwardIfTooFarBehind(ModelPart armPart, ModelPart bodyPartRef) {
         if (armPart == null || bodyPartRef == null) return;

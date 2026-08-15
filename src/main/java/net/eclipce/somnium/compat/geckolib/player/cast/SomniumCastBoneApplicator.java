@@ -527,43 +527,52 @@ public final class SomniumCastBoneApplicator {
                                                     CastAnimationOptions options) {
         if (!options.compoundBoneHierarchy()) return;
 
-        // Apply body's own position delta directly — applyBoneIfPresent (which already ran
-        // in applyAllBones, before this method) skips it entirely for the reason documented
-        // above, but that limitation doesn't apply here: this method's whole purpose is
-        // correctly carrying a bone's transform to its children, which is exactly what
-        // body's position needs. Applied once, here, not per-compounded-bone — body isn't
-        // itself one of COMPOUNDABLE_BONES. Uses applyBoneIfPresent's exact sign convention
-        // (-px, -py, +pz) for consistency with how every other bone's position is read.
+        // Apply body's own position directly — applyBoneIfPresent (which already ran in
+        // applyAllBones, before this method) skips body's position entirely for the reason
+        // documented above, but that limitation doesn't apply here: this method's whole
+        // purpose is correctly carrying a bone's transform to its children, which is exactly
+        // what body's position needs. Applied once, here, not per-compounded-bone — body
+        // isn't itself one of COMPOUNDABLE_BONES.
         //
-        // Declared at method scope (not just inside the block below) so the arm forward/back
-        // safeguard further down can reference body's final Z as a trusted reference point.
+        // Computed via the SAME mirror-conjugated translate+rotate math the walk below uses
+        // for every other bone — NOT the simpler applyBoneIfPresent-style (-px,-py,+pz)
+        // shortcut an earlier version used. That shortcut is correct for a bone rendered
+        // completely standalone (applyBoneIfPresent's own use of it, for parts with no
+        // compounding), and happens to also match this walk-based result whenever body's
+        // rotation is substantial (verified: identical at the peak/loop pose, (0,5.6,-1) both
+        // ways). But it diverges from what compounded children compute at LOW or ZERO
+        // rotation — confirmed directly from a fresh log at the very start of the "_in"
+        // transition (body barely rotated yet): body's shortcut gave -0.0976 on X while
+        // head — compounded from body via the walk, same frame — gave +0.0976. Opposite
+        // signs, same magnitude: body and its children visibly moving in opposite directions,
+        // which is exactly "the chest doesn't follow the rest." The two conventions only
+        // happen to agree at high rotation and silently disagree near zero; using the same
+        // math body's children already use for their own contribution from it removes the
+        // inconsistency at its source instead of matching it turn by turn.
         ModelPart bodyPart = null;
         Optional<GeoBone> bodyOpt = bakedModel.getBone("body");
         if (bodyOpt.isPresent() && !bodyOpt.get().isHidden()) {
             GeoBone bodyBone = bodyOpt.get();
             bodyPart = SomniumPlayerBoneMap.getPart(playerModel, "body");
             if (bodyPart != null) {
-                // ── Diagnostic (temporary — remove once confirmed working) ──
-                // Captures bodyPart's x/y/z BEFORE this write, so a fresh log can confirm
-                // whether resetPose() actually left it at (0,0,0) at this point, as assumed —
-                // if applyBoneIfPresent or something else already left a nonzero value here,
-                // this addition would land on top of it instead of a clean baseline, which
-                // would explain a "body/arms offset, similar to before" symptom without any
-                // error in the compounding math itself (which the logged finalPos values for
-                // every other bone already confirm matches this exactly).
                 float beforeX = bodyPart.x, beforeY = bodyPart.y, beforeZ = bodyPart.z;
 
-                float bpx = bodyBone.getPosX();
-                float bpy = bodyBone.getPosY();
-                float bpz = bodyBone.getPosZ();
-                if (bpx != 0f) bodyPart.x -= bpx;
-                if (bpy != 0f) bodyPart.y -= bpy;
-                if (bpz != 0f) bodyPart.z += bpz;
+                PoseStack bodyScratch = new PoseStack();
+                bodyScratch.scale(-1f, -1f, 1f);
+                RenderUtils.translateMatrixToBone(bodyScratch, bodyBone);
+                RenderUtils.rotateMatrixAroundBone(bodyScratch, bodyBone);
+                bodyScratch.scale(-1f, -1f, 1f);
+
+                Vector3f bodyWorldPos = bodyScratch.last().pose().getTranslation(new Vector3f());
+                bodyPart.x = bodyWorldPos.x() * 16f;
+                bodyPart.y = bodyWorldPos.y() * 16f;
+                bodyPart.z = bodyWorldPos.z() * 16f;
 
                 if (probedAnim != null && probedAnim.contains("gear_second")) {
                     System.out.println("[Somnium-DIAG] body direct position: anim=" + probedAnim
                             + " before=(" + beforeX + ", " + beforeY + ", " + beforeZ + ")"
-                            + " bodyBone.pos=(" + bpx + ", " + bpy + ", " + bpz + ")"
+                            + " bodyBone.pos=(" + bodyBone.getPosX() + ", " + bodyBone.getPosY()
+                            + ", " + bodyBone.getPosZ() + ")"
                             + " after=(" + bodyPart.x + ", " + bodyPart.y + ", " + bodyPart.z + ")");
                 }
             }

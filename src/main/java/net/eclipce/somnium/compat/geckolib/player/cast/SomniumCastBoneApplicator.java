@@ -71,6 +71,14 @@ public final class SomniumCastBoneApplicator {
      * @param partialTick render partial tick from the event
      */
     public static void apply(Player player, PlayerModel<?> playerModel, float partialTick) {
+        // Set when tickAnimation detects this frame is the animation's final one — see the
+        // "ended" block further down for the full reasoning. Checked at the very end of this
+        // method, after every other apply() step has run normally for this frame, so the
+        // final/held pose actually renders before the animation is cleared — instead of the
+        // previous behaviour of clearing and returning immediately, which skipped bone
+        // application entirely for this frame and let vanilla's default pose flash through.
+        boolean finishAnimationAfterThisFrame = false;
+
         // Clear scale data from the previous rendered player before writing new data.
         // This must happen unconditionally — even if there is no active animation —
         // so that scale data never carries over across players in the same frame.
@@ -242,12 +250,26 @@ public final class SomniumCastBoneApplicator {
 
             if (ended) {
                 System.out.println("[Somnium-DIAG] apply: animation ended — " + reason
-                        + " — clearing state");
-                animatable.onAnimationFinished();
-                // Skip the remaining apply steps; next frame's restorePreviouslyHidden
-                // will re-show any layers/parts we hid, and the early-return at the top
-                // of apply() will catch the now-null activeAnimation.
-                return;
+                        + " — finishing after this frame's bone application");
+                // Defer cleanup to the end of apply(), instead of returning here immediately.
+                //
+                // BUG FIXED: this used to call animatable.onAnimationFinished() and return()
+                // right here, before any bone application ran for this frame. tickAnimation
+                // (just above) has already advanced the baked model's bones to their final,
+                // held-frame values by the time "ended" becomes true — skipping application
+                // meant this exact frame rendered with NO pose override applied at all,
+                // which is visually indistinguishable from vanilla's default pose flashing
+                // through for one frame. That's the "glitches back to default pose for a
+                // split second" symptom between gear_second_in finishing and gear_second_loop
+                // picking up on the next tick — and it would affect every PLAY_ONCE-style
+                // clip using this shared method, not just Gear Second specifically.
+                //
+                // The fix: let this frame's bone application proceed completely normally
+                // below (using the already-correct, final-frame baked model data), and only
+                // call onAnimationFinished() at the very end, after everything else this
+                // frame already does. See the matching finishAnimationAfterThisFrame flag
+                // check at the end of this method.
+                finishAnimationAfterThisFrame = true;
             }
         } catch (Exception e) {
             System.out.println("[Somnium-DIAG] apply: tickAnimation THREW " + e);
@@ -342,6 +364,16 @@ public final class SomniumCastBoneApplicator {
         // top of the next frame's apply()) can re-show them when the option set changes
         // or the animation ends.
         applyHideOptions(playerModel, options, animatable);
+
+        // Deferred from the "ended" check in the tickAnimation block above — this frame's
+        // bone application has now run completely normally (using the final/held pose),
+        // so it's safe to clear the animation state. The next frame's early-return at the
+        // top of apply() (activeAnimation == null) and needsCleanupPass handling take over
+        // from here, same as before — only the timing of THIS call moved, not what happens
+        // afterward.
+        if (finishAnimationAfterThisFrame) {
+            animatable.onAnimationFinished();
+        }
     }
 
     // ─── Bone application ────────────────────────────────────────────────────
@@ -363,7 +395,7 @@ public final class SomniumCastBoneApplicator {
      * Large whole-body transformation animations do need it. See
      * {@link #applyBoneHierarchyCompound}, called right after this method, for the proper
      * (quaternion-composed, not scalar-add) fix — gated behind
-     * {@link CastAnimationOptions#boneHierarchy()} so it never touches an animation that
+     * {@link CastAnimationOptions#compoundBoneHierarchy()} so it never touches an animation that
      * doesn't explicitly reference a hierarchy.</p>
      */
     private static void applyAllBones(BakedGeoModel bakedModel,
@@ -523,8 +555,8 @@ public final class SomniumCastBoneApplicator {
      * formula guess, before it's touched again.
      */
     private static void applyBoneHierarchyCompound(BakedGeoModel bakedModel,
-                                                    PlayerModel<?> playerModel,
-                                                    CastAnimationOptions options) {
+                                                   PlayerModel<?> playerModel,
+                                                   CastAnimationOptions options) {
         if (!options.compoundBoneHierarchy()) return;
 
         // Apply body's own position directly — applyBoneIfPresent (which already ran in
@@ -811,6 +843,54 @@ public final class SomniumCastBoneApplicator {
         // overshooting jump the -3px version made.
         pullForwardIfTooFarBehind(rightArmPart, bodyPart);
         pullForwardIfTooFarBehind(leftArmPart, bodyPart);
+
+        // ── Body/leg overlap safeguard ──
+        //
+        // At rest, body's bottom edge (body.y + its own ~12px height) and a leg's top (the
+        // leg's own pivot, since legs hang down from there) meet exactly — body.y=0, leg
+        // pivot=12, zero overlap, by design. Confirmed directly from a fresh log at the peak
+        // pose: body sits at y=5.6 (down 5.6px from rest) while the legs sit at y≈12.86/12.93
+        // (down only ~0.9px from their own rest of 12) — body descends roughly 5x further
+        // than the legs do for this pose, so body's bottom edge (5.6+12=17.6) lands about
+        // 4.7px past where the legs begin. That's the source of the reported body/leg
+        // misalignment — not a sign error or a wrong bone, just body and legs moving down by
+        // very different amounts during the same pose.
+        //
+        // Legs are independently confirmed correct (their position determines where the
+        // character plants on the ground), so this only ever adjusts body, never the legs —
+        // same reasoning as the arm safeguards above always moving the arm, never the leg.
+        // Allows a small amount of overlap rather than forcing zero: a torso tucking slightly
+        // toward the hips during a deep crouch is normal and expected, and forcing an exact
+        // seam here risks looking more artificial than the small overlap does. Only clamps
+        // when the overlap exceeds that allowance — a no-op for any pose where body and legs
+        // already move down by similar amounts.
+        clampBodyLegOverlap(bodyPart, rightLegPart, leftLegPart);
+    }
+
+    /** Body's own cube height in pixels — hangs straight down from its pivot, same as every
+     *  other limb in this rig. Matches vanilla's own body cube dimensions. */
+    private static final float BODY_HEIGHT_PX = 12f;
+
+    /** How much body's bottom edge is allowed to extend past a leg's top before being pulled
+     *  back up. Deliberately nonzero — some overlap during a deep crouch reads as a natural
+     *  torso tuck; this only catches the excess beyond that, not all of it. */
+    private static final float MAX_BODY_LEG_OVERLAP_PX = 3f;
+
+    private static void clampBodyLegOverlap(ModelPart bodyPartRef, ModelPart rightLegPart, ModelPart leftLegPart) {
+        if (bodyPartRef == null) return;
+
+        Float nearestLegTop = null;
+        if (rightLegPart != null) nearestLegTop = rightLegPart.y;
+        if (leftLegPart != null) {
+            nearestLegTop = (nearestLegTop == null) ? leftLegPart.y : Math.min(nearestLegTop, leftLegPart.y);
+        }
+        if (nearestLegTop == null) return;
+
+        float bodyBottom = bodyPartRef.y + BODY_HEIGHT_PX;
+        float allowedBottom = nearestLegTop + MAX_BODY_LEG_OVERLAP_PX;
+        if (bodyBottom <= allowedBottom) return; // already within the allowed overlap
+
+        bodyPartRef.y = allowedBottom - BODY_HEIGHT_PX;
     }
 
     /** Fraction of left_arm's compounded X pulled back toward 0 (center) when it's on the

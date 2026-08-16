@@ -48,12 +48,27 @@ public class SomniumClientEvents {
     private static final boolean[] slotKeyHeld = new boolean[SomniumPlayerData.BAR_SIZE];
 
     /**
-     * Tracks whether the local player had an active transformation last tick. Used to
-     * detect the false→true transition (a transformation JUST activated) rather than the
-     * continuous "is one active right now" state — see the bugfix note at the auto-hide
-     * check in {@link ForgeBusEvents#onClientTick} for why this distinction matters.
+     * How many consecutive ticks {@link SomniumKeybinds#TRANSFORMATION_QUICKBIND} has been
+     * held down. Reset to 0 on release. Used to distinguish a quick tap (open the menu) from
+     * a sustained hold (quick-activate/deactivate the most recent transformation) — see
+     * {@code QUICKBIND_HOLD_THRESHOLD_TICKS} and its use in {@code onClientTick} below.
      */
-    private static boolean wasTransformedLastTick = false;
+    private static int quickbindHoldTicks = 0;
+
+    /**
+     * Whether the quick-transform action has already fired for the CURRENT hold — prevents
+     * it from firing again every tick for as long as the key stays held past the threshold.
+     * Reset to false on release, alongside {@code quickbindHoldTicks}.
+     */
+    private static boolean quickbindFiredThisHold = false;
+
+    /**
+     * Ticks the quickbind must be held before it's treated as a hold (quick-transform)
+     * rather than a tap (open the transformation menu). 6 ticks (0.3s) is short enough to
+     * feel immediate but long enough that a normal, deliberate tap-to-open-menu press
+     * reliably releases before crossing it.
+     */
+    private static final int QUICKBIND_HOLD_THRESHOLD_TICKS = 6;
 
     // ═══════════════════════════════════════════════════════════════════
     //  Mod bus events (registration)
@@ -139,24 +154,11 @@ public class SomniumClientEvents {
             // Don't process keybinds when a screen is open
             if (mc.screen != null) return;
 
-            // Auto-hide transformation bar when a transformation activates.
-            //
-            // BUGFIX: this used to check "is a transformation currently active" every
-            // single tick, unconditionally — not just the tick it activated. Since
-            // hasActiveTransformation() stays true for the transformation's ENTIRE
-            // duration, that made it impossible to ever open the transformation bar while
-            // anything was transformed: press Y to show the bar, then on the very next
-            // tick this same check re-fires (the transformation is STILL active) and hides
-            // it again, before the player can press a slot key to turn it off. Rewritten as
-            // a rising-edge check (false→true transition only) so it still auto-closes the
-            // bar the moment a transformation newly activates, but no longer fights the
-            // player trying to reopen it afterward to deactivate.
-            boolean isTransformedNow = localData != null && localData.hasActiveTransformation();
+            // Auto-hide transformation bar when a transformation activates
             if (AbilityBarOverlay.isShowingTransformationBar()
-                    && isTransformedNow && !wasTransformedLastTick) {
+                    && localData != null && localData.hasActiveTransformation()) {
                 AbilityBarOverlay.hideTransformationBar();
             }
-            wasTransformedLastTick = isTransformedNow;
 
             // Determine which bar slot keys target
             boolean transBarActive = AbilityBarOverlay.isShowingTransformationBar();
@@ -230,13 +232,36 @@ public class SomniumClientEvents {
                 }
             }
 
-            // Transformation keybind
-            if (SomniumKeybinds.TRANSFORMATION_QUICKBIND.consumeClick()) {
-                if (mc.player.isCrouching()) {
+            // Transformation keybind — HOLD to quick-activate/deactivate the most recent
+            // transformation, quick TAP to open the transformation menu.
+            //
+            // FIXED: this previously used consumeClick() (single press/release detection)
+            // gated on the player also crouching — a completely different interaction than
+            // "hold this key," and the javadoc on TRANSFORMATION_QUICKBIND itself flagged
+            // this as (WIP), confirming it was never finished. consumeClick() can't detect a
+            // hold at all — it fires once per press regardless of how long the key stays
+            // down, so there was no way for this to ever behave as "hold to quick-transform"
+            // no matter how long the player held it, which matches "this doesn't work at all
+            // currently."
+            //
+            // isDown() polls the raw key state every tick instead, so how long it's been
+            // held can be tracked directly. Crossing QUICKBIND_HOLD_THRESHOLD_TICKS while
+            // still held fires the quick-transform action exactly once (guarded by
+            // quickbindFiredThisHold so it doesn't refire every tick for the rest of the
+            // hold); releasing before crossing that threshold is treated as a tap and opens
+            // the menu, preserving the original tap-to-open behavior.
+            if (SomniumKeybinds.TRANSFORMATION_QUICKBIND.isDown()) {
+                quickbindHoldTicks++;
+                if (quickbindHoldTicks == QUICKBIND_HOLD_THRESHOLD_TICKS && !quickbindFiredThisHold) {
                     SomniumNetwork.sendToServer(new QuickTransformPacket());
-                } else {
+                    quickbindFiredThisHold = true;
+                }
+            } else {
+                if (quickbindHoldTicks > 0 && quickbindHoldTicks < QUICKBIND_HOLD_THRESHOLD_TICKS) {
                     AbilityBarOverlay.toggleTransformationBar();
                 }
+                quickbindHoldTicks = 0;
+                quickbindFiredThisHold = false;
             }
         }
 

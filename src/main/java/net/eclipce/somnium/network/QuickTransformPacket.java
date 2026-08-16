@@ -15,9 +15,11 @@ import net.minecraftforge.network.NetworkEvent;
 import java.util.function.Supplier;
 
 /**
- * Client → Server packet for the transformation crouch quick-bind.
+ * Client → Server packet for the transformation quick-bind.
  *
- * <p>When crouching + pressing the transformation keybind:</p>
+ * <p>Sent when the player HOLDS the transformation keybind past the hold threshold (see
+ * {@code QUICKBIND_HOLD_THRESHOLD_TICKS} in {@code SomniumClientEvents}) — not on crouch, an
+ * earlier (WIP, never finished) design this replaces:</p>
  * <ul>
  *     <li>If not transformed → activates the most recent transformation</li>
  *     <li>If transformed → deactivates the current transformation</li>

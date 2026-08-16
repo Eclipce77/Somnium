@@ -74,9 +74,24 @@ public class SomniumTickHandler {
         tickPassiveAbilities(serverPlayer, data);
         tickTransformations(serverPlayer, data);
         tickMeters(serverPlayer, data);
+        enforceMovementLock(serverPlayer, data);
 
         // Sync to client if anything changed
         SomniumNetwork.syncIfDirty(serverPlayer);
+    }
+
+    /**
+     * Zeroes horizontal movement for players with an active movement lock (see
+     * {@link SomniumPlayerData#lockMovementForTicks}). Vertical velocity (Y) is left alone
+     * so gravity/falling still behaves normally — this only prevents walking/strafing, not
+     * falling or an existing jump's vertical arc.
+     */
+    private static void enforceMovementLock(ServerPlayer player, SomniumPlayerData data) {
+        if (!data.isMovementLocked(player.level().getGameTime())) return;
+        net.minecraft.world.phys.Vec3 delta = player.getDeltaMovement();
+        if (delta.x != 0 || delta.z != 0) {
+            player.setDeltaMovement(0, delta.y, 0);
+        }
     }
 
     /**

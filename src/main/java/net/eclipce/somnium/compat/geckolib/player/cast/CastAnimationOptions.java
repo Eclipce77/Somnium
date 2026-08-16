@@ -81,6 +81,31 @@ public final class CastAnimationOptions {
      * changes behavior for animations that explicitly request it.</p>
      */
     private final boolean compoundBoneHierarchy;
+    /**
+     * When {@code true}, reaching this animation's authored length ({@link #animationLengthTicks})
+     * does NOT clear the active animation and hand control back to vanilla — the applicator
+     * keeps applying this clip's final-frame pose indefinitely, exactly the "hold on last
+     * frame" behavior a clip's own author intends, until something else explicitly replaces
+     * it (a new {@code triggerCastAnimation} call) or cancels it outright.
+     *
+     * <p>Added to fix a real, confirmed bug: a "hold on last frame, hand off to a following
+     * loop clip" animation (e.g. Gear Second's {@code gear_second_in} → {@code gear_second_loop})
+     * would clear itself the instant its length was reached, and the follow-up clip is
+     * triggered from a completely separate tick-driven ability hook — not this render-side
+     * completion check — so there's an unavoidable window between the two where nothing has
+     * an active animation yet. Every render in that window fell through to vanilla's default
+     * pose, which is exactly the "glitches back to default pose for a split second" symptom.
+     * Deferring the completion callback to run after this frame's own bone application
+     * (a related, separate fix — see {@code SomniumCastBoneApplicator#apply}) only fixed the
+     * frame where "ended" is first detected; it could not close a gap spanning multiple
+     * frames across a tick boundary. Not clearing at all — for a clip that's explicitly
+     * marked as holding until replaced — closes it at the source instead.</p>
+     *
+     * <p>Defaults to {@code false}, preserving the existing "clear on finish" behavior for
+     * every other animation. Only meaningful when {@link #animationLengthTicks} is
+     * {@code > 0}; a {@code <= 0} (already-looping) clip never reaches this check.</p>
+     */
+    private final boolean holdOnFinish;
 
     private CastAnimationOptions(Set<CastBodyPart> suppressVanillaAnimOn,
                                  boolean           onExecuteBodyAlign,
@@ -92,7 +117,8 @@ public final class CastAnimationOptions {
                                  int     animationLengthTicks,
                                  float   capturedLookPitch,
                                  int     startOffsetTicks,
-                                 boolean compoundBoneHierarchy) {
+                                 boolean compoundBoneHierarchy,
+                                 boolean holdOnFinish) {
         this.suppressVanillaAnimOn  = suppressVanillaAnimOn;
         this.onExecuteBodyAlign     = onExecuteBodyAlign;
         this.changeDirectionOnLook  = changeDirectionOnLook;
@@ -104,6 +130,7 @@ public final class CastAnimationOptions {
         this.capturedLookPitch      = capturedLookPitch;
         this.startOffsetTicks       = startOffsetTicks;
         this.compoundBoneHierarchy  = compoundBoneHierarchy;
+        this.holdOnFinish           = holdOnFinish;
     }
 
     /**
@@ -126,7 +153,8 @@ public final class CastAnimationOptions {
                 animationLengthTicks,
                 pitchDegrees,
                 startOffsetTicks,
-                compoundBoneHierarchy);
+                compoundBoneHierarchy,
+                holdOnFinish);
     }
 
     // ─── Accessors ─────────────────────────────────────────────────────────────
@@ -206,6 +234,12 @@ public final class CastAnimationOptions {
      */
     public boolean compoundBoneHierarchy() { return compoundBoneHierarchy; }
 
+    /**
+     * @return {@code true} if reaching this animation's length holds its final pose
+     *         indefinitely instead of clearing back to vanilla. See the field javadoc.
+     */
+    public boolean holdOnFinish() { return holdOnFinish; }
+
     public static Builder builder() { return new Builder(); }
 
     // ─── Network codec ─────────────────────────────────────────────────────────
@@ -238,6 +272,7 @@ public final class CastAnimationOptions {
                 buf.readVarInt(),
                 buf.readFloat(),
                 buf.readVarInt(),
+                buf.readBoolean(),
                 buf.readBoolean());
     }
 
@@ -258,6 +293,7 @@ public final class CastAnimationOptions {
         buf.writeFloat(capturedLookPitch);
         buf.writeVarInt(startOffsetTicks);
         buf.writeBoolean(compoundBoneHierarchy);
+        buf.writeBoolean(holdOnFinish);
     }
 
     /**
@@ -305,6 +341,7 @@ public final class CastAnimationOptions {
         private int     animationLengthTicks = 0;
         private int     startOffsetTicks     = 0;
         private boolean compoundBoneHierarchy = false;
+        private boolean holdOnFinish          = false;
 
         private Builder() {}
 
@@ -449,6 +486,20 @@ public final class CastAnimationOptions {
             return this;
         }
 
+        /**
+         * When {@code true}, reaching this animation's length ({@link #animationLengthTicks})
+         * holds its final pose indefinitely instead of clearing back to vanilla — use for a
+         * clip that's meant to hand off seamlessly to a follow-up animation triggered from
+         * elsewhere (a tick handler, another ability hook), rather than one that should
+         * genuinely end and return control to vanilla locomotion on its own. See
+         * {@link CastAnimationOptions#holdOnFinish} for why this exists — a real, confirmed
+         * transition glitch, not a hypothetical one. Defaults to {@code false}.
+         */
+        public Builder holdOnFinish(boolean value) {
+            this.holdOnFinish = value;
+            return this;
+        }
+
         public CastAnimationOptions build() {
             // EnumSet copies preserve enum-iteration order and use a compact bitset
             // internally — cheap to construct, cheap to iterate.
@@ -467,7 +518,8 @@ public final class CastAnimationOptions {
                     animationLengthTicks,
                     0f, // capturedLookPitch is stamped later, server-side, at execution
                     startOffsetTicks,
-                    compoundBoneHierarchy);
+                    compoundBoneHierarchy,
+                    holdOnFinish);
         }
     }
 }

@@ -70,6 +70,14 @@ public class SomniumClientEvents {
      */
     private static final int QUICKBIND_HOLD_THRESHOLD_TICKS = 6;
 
+    /**
+     * Whether the local player had an active transformation last tick. Used to detect the
+     * RISING EDGE (transformation just started) for auto-hiding the transformation bar — see
+     * the fix in {@code onClientTick} below for why this replaced a plain "is a transformation
+     * currently active" check.
+     */
+    private static boolean wasTransformedLastTick = false;
+
     // ═══════════════════════════════════════════════════════════════════
     //  Mod bus events (registration)
     // ═══════════════════════════════════════════════════════════════════
@@ -154,11 +162,23 @@ public class SomniumClientEvents {
             // Don't process keybinds when a screen is open
             if (mc.screen != null) return;
 
-            // Auto-hide transformation bar when a transformation activates
-            if (AbilityBarOverlay.isShowingTransformationBar()
-                    && localData != null && localData.hasActiveTransformation()) {
+            // Auto-hide transformation bar when a transformation activates.
+            //
+            // FIXED: this used to run unconditionally every tick — "if the bar is showing AND
+            // a transformation is active, hide it" — which meant the bar could never stay
+            // open for as long as ANY transformation was active, including one the player was
+            // already in. The original intent (confirmed by the comment) was narrower: close
+            // the bar right after a transformation is SELECTED from it. That's a one-time,
+            // rising-edge event — hasActiveTransformation() going false→true — not a
+            // continuous condition. Checking it every tick meant the player could never
+            // reopen the bar afterward (e.g. to deactivate by clicking, or just to check
+            // options) — reported directly as "no longer able to open the transformation GUI
+            // bar when a transformation is active."
+            boolean isTransformedNow = localData != null && localData.hasActiveTransformation();
+            if (AbilityBarOverlay.isShowingTransformationBar() && isTransformedNow && !wasTransformedLastTick) {
                 AbilityBarOverlay.hideTransformationBar();
             }
+            wasTransformedLastTick = isTransformedNow;
 
             // Determine which bar slot keys target
             boolean transBarActive = AbilityBarOverlay.isShowingTransformationBar();

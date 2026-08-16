@@ -249,27 +249,41 @@ public final class SomniumCastBoneApplicator {
             }
 
             if (ended) {
-                System.out.println("[Somnium-DIAG] apply: animation ended — " + reason
-                        + " — finishing after this frame's bone application");
-                // Defer cleanup to the end of apply(), instead of returning here immediately.
-                //
-                // BUG FIXED: this used to call animatable.onAnimationFinished() and return()
-                // right here, before any bone application ran for this frame. tickAnimation
-                // (just above) has already advanced the baked model's bones to their final,
-                // held-frame values by the time "ended" becomes true — skipping application
-                // meant this exact frame rendered with NO pose override applied at all,
-                // which is visually indistinguishable from vanilla's default pose flashing
-                // through for one frame. That's the "glitches back to default pose for a
-                // split second" symptom between gear_second_in finishing and gear_second_loop
-                // picking up on the next tick — and it would affect every PLAY_ONCE-style
-                // clip using this shared method, not just Gear Second specifically.
-                //
-                // The fix: let this frame's bone application proceed completely normally
-                // below (using the already-correct, final-frame baked model data), and only
-                // call onAnimationFinished() at the very end, after everything else this
-                // frame already does. See the matching finishAnimationAfterThisFrame flag
-                // check at the end of this method.
-                finishAnimationAfterThisFrame = true;
+                if (options.holdOnFinish()) {
+                    // Don't clear at all. The deferred-clear fix below (finishAnimationAfterThisFrame)
+                    // only closes the gap on the SINGLE frame where "ended" is first detected —
+                    // it can't help with what turned out to be the real, still-reported bug:
+                    // the follow-up animation (e.g. gear_second_loop) is triggered from a
+                    // separate, tick-driven ability hook (onTransformedTick), not from this
+                    // render-side completion check, and those two run on different clocks.
+                    // Rendering can happen multiple times within a single tick (interpolated
+                    // by partialTick); "elapsed >= length" can become true partway through a
+                    // tick, meaning several renders can pass between that moment and the next
+                    // tick actually arriving and firing the follow-up trigger. Every one of
+                    // those frames previously had activeAnimation cleared and fell through to
+                    // vanilla's default pose — a multi-frame gap the single-frame fix below
+                    // could never close. Not clearing at all removes the gap outright: the
+                    // clip keeps holding its already-correct final-frame pose (tickAnimation
+                    // naturally holds there once elapsed exceeds the length) until the
+                    // follow-up trigger explicitly replaces it, whenever that arrives.
+                    if (probedAnim != null && probedAnim.contains("gear_second")) {
+                        System.out.println("[Somnium-DIAG] apply: animation ended — " + reason
+                                + " — holdOnFinish is set, continuing to hold this pose");
+                    }
+                } else {
+                    System.out.println("[Somnium-DIAG] apply: animation ended — " + reason
+                            + " — finishing after this frame's bone application");
+                    // Defer cleanup to the end of apply(), instead of returning here immediately.
+                    //
+                    // This still matters for animations that DON'T set holdOnFinish: the
+                    // frame where "ended" first becomes true would otherwise skip bone
+                    // application entirely — tickAnimation (just above) has already advanced
+                    // the baked model's bones to their final, held-frame values by this point,
+                    // so skipping application meant that one frame rendered with no pose
+                    // override at all. See the matching finishAnimationAfterThisFrame flag
+                    // check at the end of this method.
+                    finishAnimationAfterThisFrame = true;
+                }
             }
         } catch (Exception e) {
             System.out.println("[Somnium-DIAG] apply: tickAnimation THREW " + e);
@@ -395,7 +409,7 @@ public final class SomniumCastBoneApplicator {
      * Large whole-body transformation animations do need it. See
      * {@link #applyBoneHierarchyCompound}, called right after this method, for the proper
      * (quaternion-composed, not scalar-add) fix — gated behind
-     * {@link CastAnimationOptions#compoundBoneHierarchy()} so it never touches an animation that
+     * {@link CastAnimationOptions#boneHierarchy()} so it never touches an animation that
      * doesn't explicitly reference a hierarchy.</p>
      */
     private static void applyAllBones(BakedGeoModel bakedModel,
@@ -783,6 +797,22 @@ public final class SomniumCastBoneApplicator {
         // X-axis correction below for what actually fixes left_arm's position, and the
         // Z-axis (forward/back) correction further down for right_arm.
 
+        // ── Loop-only scope for the arm safeguards below ──
+        //
+        // pullTowardCenterX, the scale guarantee, and pullForwardIfTooFarBehind were all
+        // calibrated directly against gear_second_loop's specific compounded values — every
+        // pixel/fraction constant below came from comparing THAT pose against Blockbench.
+        // Applying them unconditionally to every frame, including the gear_second_in and
+        // gear_second_out transition clips, was reported directly: "left arm hugs the body
+        // during _in/_out animations." Those clips have their own, different, continuously
+        // changing arm positions as the pose transitions in and out — a correction tuned for
+        // one static held pose has no reason to be correct for a moving transition, and
+        // pulling toward center throughout the transition is exactly what "hugging the body"
+        // describes. Scoped to the loop specifically so the transitions play with the
+        // uncorrected, authored compounded values, matching Blockbench's own path through
+        // the transition rather than a loop-tuned correction bleeding into it.
+        boolean isLoopPose = probedAnim != null && probedAnim.contains("gear_second_loop");
+
         // ── Left arm: move toward center (X axis) ──
         //
         // Direct feedback: left_arm needed to move from its original compounded position
@@ -794,7 +824,9 @@ public final class SomniumCastBoneApplicator {
         // an animation that genuinely wants the arm held out wide. Kept as a fraction of the
         // arm's own X rather than a fixed pixel offset so it scales sensibly if a future
         // animation's compounded arm X differs substantially from this one's.
-        pullTowardCenterX(leftArmPart);
+        if (isLoopPose) {
+            pullTowardCenterX(leftArmPart);
+        }
 
         // ── Left arm: guarantee no scale is ever applied, regardless of position ──
         //
@@ -803,14 +835,11 @@ public final class SomniumCastBoneApplicator {
         // compounding method never writes to SomniumBoneScaleMap for any of the five
         // compounded bones (confirmed by re-reading this whole method — the only scale writer
         // touching these parts is applyBoneIfPresent, which reads each bone's OWN scale
-        // channel independently, and left_arm's own channel is identity). The working theory
-        // was that left_arm sitting too close to the genuinely-pulsing left_leg made it LOOK
-        // like both were pulsing, which is why the position fix was expected to also fix this.
-        // If the pulsing is still visible after this message's position correction, that
-        // theory needs to be reconsidered — but there is no cost to being certain either way:
-        // explicitly clearing any scale entry for left_arm's part here is a no-op if none was
-        // ever registered (which every trace so far says is the case), and a hard guarantee
-        // if something is registering one through a path not yet found.
+        // channel independently, and left_arm's own channel is identity). Left unscoped
+        // (applies regardless of which clip is playing) — unlike the position safeguards,
+        // this can't distort a transition's own path, it only ever removes a scale entry
+        // that should never exist on this part in the first place, so there's no cost to
+        // leaving it unconditional.
         if (leftArmPart != null) {
             SomniumBoneScaleMap.removeFor(leftArmPart);
         }
@@ -841,8 +870,12 @@ public final class SomniumCastBoneApplicator {
         // closer to the +1.0 end since that one was already "close" — margin=0.5px lands
         // right_arm at z=-0.5, a modest step past the close point rather than the large,
         // overshooting jump the -3px version made.
-        pullForwardIfTooFarBehind(rightArmPart, bodyPart);
-        pullForwardIfTooFarBehind(leftArmPart, bodyPart);
+        //
+        // Scoped to the loop pose for the same reason as pullTowardCenterX above.
+        if (isLoopPose) {
+            pullForwardIfTooFarBehind(rightArmPart, bodyPart);
+            pullForwardIfTooFarBehind(leftArmPart, bodyPart);
+        }
 
         // ── Body/leg overlap safeguard ──
         //
@@ -872,9 +905,13 @@ public final class SomniumCastBoneApplicator {
     private static final float BODY_HEIGHT_PX = 12f;
 
     /** How much body's bottom edge is allowed to extend past a leg's top before being pulled
-     *  back up. Deliberately nonzero — some overlap during a deep crouch reads as a natural
-     *  torso tuck; this only catches the excess beyond that, not all of it. */
-    private static final float MAX_BODY_LEG_OVERLAP_PX = 3f;
+     *  back up. Was 3px (allowing some overlap as a natural-looking torso tuck) — reduced to
+     *  0 after direct feedback that 3px was "visually passable, but not fixed." Zero forces
+     *  body's bottom to land exactly at the nearest leg's top — the same relationship body
+     *  and legs have at rest (body.y=0, leg pivot=12, meeting with zero overlap by design) —
+     *  i.e. body is forced back to that same "normal" alignment for this pose too, rather
+     *  than being allowed to sink further down than the legs do. */
+    private static final float MAX_BODY_LEG_OVERLAP_PX = 0f;
 
     private static void clampBodyLegOverlap(ModelPart bodyPartRef, ModelPart rightLegPart, ModelPart leftLegPart) {
         if (bodyPartRef == null) return;

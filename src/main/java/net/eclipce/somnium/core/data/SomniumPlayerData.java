@@ -133,6 +133,32 @@ public class SomniumPlayerData {
     private int activePage = 0;
 
     /**
+     * Game-time tick at which this player's movement lock expires. 0 (or any tick already in
+     * the past) means "not locked." Not persisted/synced — purely a short-lived, server-side
+     * enforcement window (e.g. locking movement while a transformation's in/out animation
+     * plays), so it doesn't need markDirty() or network sync the way player-facing state does.
+     */
+    private long movementLockedUntilTick = 0L;
+
+    /** Locks this player's horizontal movement until {@code currentGameTime + ticks}. Called
+     *  by {@code SomniumTickHandler}'s per-tick enforcement, which zeroes horizontal velocity
+     *  every tick the lock is still active. Calling this again before a previous lock expires
+     *  extends it to the new, later expiry rather than shortening it — so two overlapping
+     *  callers (e.g. a transform-in lock immediately followed by another effect) don't
+     *  accidentally unlock movement early. */
+    public void lockMovementForTicks(long currentGameTime, int ticks) {
+        long newExpiry = currentGameTime + ticks;
+        if (newExpiry > movementLockedUntilTick) {
+            movementLockedUntilTick = newExpiry;
+        }
+    }
+
+    /** @return true if this player's movement is currently locked. */
+    public boolean isMovementLocked(long currentGameTime) {
+        return currentGameTime < movementLockedUntilTick;
+    }
+
+    /**
      * On/off state for passive abilities. Keyed by ability registry name.
      * Only contains entries for passive abilities the player has unlocked.
      */

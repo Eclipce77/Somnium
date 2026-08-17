@@ -140,6 +140,23 @@ public class SomniumPlayerData {
      */
     private long movementLockedUntilTick = 0L;
 
+    /** Tracks whether THIS lock was the one that zeroed the player's walking speed last
+     *  tick — so restoring it on release only ever undoes this system's own change, never
+     *  another mod's or effect's legitimate speed modification. See
+     *  {@code SomniumTickHandler#enforceMovementLock}. */
+    private boolean movementLockAppliedLastTick = false;
+
+    /** Walking speed captured the instant this system first zeroes it, so release can
+     *  restore that exact value — not vanilla's hardcoded default — in case another mod or
+     *  effect had already set a different walking speed before this lock engaged. */
+    private float walkingSpeedBeforeLock = 0.1f;
+
+    public float getWalkingSpeedBeforeLock() { return walkingSpeedBeforeLock; }
+    public void setWalkingSpeedBeforeLock(float value) { walkingSpeedBeforeLock = value; }
+
+    public boolean wasMovementLockAppliedLastTick() { return movementLockAppliedLastTick; }
+    public void setMovementLockAppliedLastTick(boolean value) { movementLockAppliedLastTick = value; }
+
     /** Locks this player's horizontal movement until {@code currentGameTime + ticks}. Called
      *  by {@code SomniumTickHandler}'s per-tick enforcement, which zeroes horizontal velocity
      *  every tick the lock is still active. Calling this again before a previous lock expires

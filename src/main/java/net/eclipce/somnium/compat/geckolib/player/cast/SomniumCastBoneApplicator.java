@@ -409,7 +409,7 @@ public final class SomniumCastBoneApplicator {
      * Large whole-body transformation animations do need it. See
      * {@link #applyBoneHierarchyCompound}, called right after this method, for the proper
      * (quaternion-composed, not scalar-add) fix — gated behind
-     * {@link CastAnimationOptions#boneHierarchy()} so it never touches an animation that
+     * {@link CastAnimationOptions#compoundBoneHierarchy()} so it never touches an animation that
      * doesn't explicitly reference a hierarchy.</p>
      */
     private static void applyAllBones(BakedGeoModel bakedModel,
@@ -624,7 +624,7 @@ public final class SomniumCastBoneApplicator {
             }
         }
 
-        ModelPart rightArmPart = null, leftArmPart = null, rightLegPart = null, leftLegPart = null;
+        ModelPart headPart = null, rightArmPart = null, leftArmPart = null, rightLegPart = null, leftLegPart = null;
 
         for (String boneName : COMPOUNDABLE_BONES) {
             Optional<GeoBone> opt = bakedModel.getBone(boneName);
@@ -757,6 +757,7 @@ public final class SomniumCastBoneApplicator {
             }
 
             switch (boneName) {
+                case "head" -> headPart = part;
                 case "right_arm" -> rightArmPart = part;
                 case "left_arm" -> leftArmPart = part;
                 case "right_leg" -> rightLegPart = part;
@@ -889,31 +890,33 @@ public final class SomniumCastBoneApplicator {
         // misalignment — not a sign error or a wrong bone, just body and legs moving down by
         // very different amounts during the same pose.
         //
-        // Legs are independently confirmed correct (their position determines where the
-        // character plants on the ground), so this only ever adjusts body, never the legs —
-        // same reasoning as the arm safeguards above always moving the arm, never the leg.
-        // Allows a small amount of overlap rather than forcing zero: a torso tucking slightly
-        // toward the hips during a deep crouch is normal and expected, and forcing an exact
-        // seam here risks looking more artificial than the small overlap does. Only clamps
-        // when the overlap exceeds that allowance — a no-op for any pose where body and legs
-        // already move down by similar amounts.
-        clampBodyLegOverlap(bodyPart, rightLegPart, leftLegPart);
+        // REWRITTEN this message — the previous version only moved bodyPart.y and left head/
+        // arms untouched. Reported directly as making things WORSE, not better: "positionally
+        // wrong." That's exactly what a body-only adjustment causes — head and both arms were
+        // already compounded, earlier in this same method, using body's ORIGINAL (unclamped)
+        // Y. Moving only body afterward doesn't move them with it; they stay floating at
+        // whatever position they'd already computed relative to the old body.y, visibly
+        // detached from body's new one. The fix: whatever delta this clamp applies to body,
+        // apply the SAME delta to head/right_arm/left_arm too — a rigid shift of the whole
+        // upper assembly, not just body alone. They stay exactly as correctly positioned
+        // relative to body as they were before the clamp; only body-plus-everything-rigidly-
+        // attached-to-it moves as one piece, closing the leg gap without detaching anything.
+        // Legs are still never touched — independently confirmed correct, same reasoning as
+        // the arm safeguards above always moving the arm, never the leg.
+        clampBodyLegOverlap(bodyPart, rightLegPart, leftLegPart, headPart, rightArmPart, leftArmPart);
     }
 
     /** Body's own cube height in pixels — hangs straight down from its pivot, same as every
      *  other limb in this rig. Matches vanilla's own body cube dimensions. */
     private static final float BODY_HEIGHT_PX = 12f;
 
-    /** How much body's bottom edge is allowed to extend past a leg's top before being pulled
-     *  back up. Was 3px (allowing some overlap as a natural-looking torso tuck) — reduced to
-     *  0 after direct feedback that 3px was "visually passable, but not fixed." Zero forces
-     *  body's bottom to land exactly at the nearest leg's top — the same relationship body
-     *  and legs have at rest (body.y=0, leg pivot=12, meeting with zero overlap by design) —
-     *  i.e. body is forced back to that same "normal" alignment for this pose too, rather
-     *  than being allowed to sink further down than the legs do. */
+    /** How much body's bottom edge is allowed to extend past a leg's top before the whole
+     *  upper assembly (body + head + arms) gets shifted up. 0 forces body's bottom to land
+     *  exactly at the nearest leg's top — the same relationship body and legs have at rest. */
     private static final float MAX_BODY_LEG_OVERLAP_PX = 0f;
 
-    private static void clampBodyLegOverlap(ModelPart bodyPartRef, ModelPart rightLegPart, ModelPart leftLegPart) {
+    private static void clampBodyLegOverlap(ModelPart bodyPartRef, ModelPart rightLegPart, ModelPart leftLegPart,
+                                            ModelPart headPart, ModelPart rightArmPart, ModelPart leftArmPart) {
         if (bodyPartRef == null) return;
 
         Float nearestLegTop = null;
@@ -927,7 +930,13 @@ public final class SomniumCastBoneApplicator {
         float allowedBottom = nearestLegTop + MAX_BODY_LEG_OVERLAP_PX;
         if (bodyBottom <= allowedBottom) return; // already within the allowed overlap
 
-        bodyPartRef.y = allowedBottom - BODY_HEIGHT_PX;
+        float newBodyY = allowedBottom - BODY_HEIGHT_PX;
+        float delta = newBodyY - bodyPartRef.y; // negative — shifts everything up
+
+        bodyPartRef.y = newBodyY;
+        if (headPart != null) headPart.y += delta;
+        if (rightArmPart != null) rightArmPart.y += delta;
+        if (leftArmPart != null) leftArmPart.y += delta;
     }
 
     /** Fraction of left_arm's compounded X pulled back toward 0 (center) when it's on the

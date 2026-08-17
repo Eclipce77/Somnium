@@ -81,16 +81,48 @@ public class SomniumTickHandler {
     }
 
     /**
-     * Zeroes horizontal movement for players with an active movement lock (see
-     * {@link SomniumPlayerData#lockMovementForTicks}). Vertical velocity (Y) is left alone
-     * so gravity/falling still behaves normally — this only prevents walking/strafing, not
-     * falling or an existing jump's vertical arc.
+     * Enforces the movement lock for players with one active (see
+     * {@link SomniumPlayerData#lockMovementForTicks}).
+     *
+     * <p>FIXED — this previously only zeroed {@code deltaMovement}, which turned out not to
+     * reliably stop movement at all: player walking is largely client-predicted (the client
+     * simulates its own movement from input and sends position updates; the server mostly
+     * validates rather than authoritatively driving it), so zeroing a physics-oriented value
+     * on the server has little effect on a client that's actively walking from its own input
+     * — reported directly as "player is still able to move during all parts of the
+     * transformation... should not be able to move at all."</p>
+     *
+     * <p>Setting {@code walkingSpeed} to 0 uses the same mechanism vanilla itself relies on
+     * for movement-restricted states — it's synced to the client via
+     * {@code onUpdateAbilities()} and respected directly by the client's own movement
+     * prediction, not just validated after the fact. {@code deltaMovement} is still zeroed
+     * too, since it's still relevant for any existing horizontal momentum (e.g. mid-air) at
+     * the moment the lock engages — but it's no longer the only mechanism doing the work.</p>
      */
     private static void enforceMovementLock(ServerPlayer player, SomniumPlayerData data) {
-        if (!data.isMovementLocked(player.level().getGameTime())) return;
-        net.minecraft.world.phys.Vec3 delta = player.getDeltaMovement();
-        if (delta.x != 0 || delta.z != 0) {
-            player.setDeltaMovement(0, delta.y, 0);
+        boolean isLocked = data.isMovementLocked(player.level().getGameTime());
+
+        if (isLocked) {
+            if (!data.wasMovementLockAppliedLastTick()) {
+                // Rising edge: capture whatever walking speed the player had right before
+                // this lock engages, so release can restore that exact value.
+                data.setWalkingSpeedBeforeLock(player.getAbilities().getWalkingSpeed());
+            }
+            if (player.getAbilities().getWalkingSpeed() != 0f) {
+                player.getAbilities().setWalkingSpeed(0f);
+                player.onUpdateAbilities();
+            }
+            net.minecraft.world.phys.Vec3 delta = player.getDeltaMovement();
+            if (delta.x != 0 || delta.z != 0) {
+                player.setDeltaMovement(0, delta.y, 0);
+            }
+            data.setMovementLockAppliedLastTick(true);
+        } else if (data.wasMovementLockAppliedLastTick()) {
+            // Falling edge: lock just ended — restore the captured pre-lock value, not a
+            // hardcoded vanilla default, in case something else had already modified it.
+            player.getAbilities().setWalkingSpeed(data.getWalkingSpeedBeforeLock());
+            player.onUpdateAbilities();
+            data.setMovementLockAppliedLastTick(false);
         }
     }
 

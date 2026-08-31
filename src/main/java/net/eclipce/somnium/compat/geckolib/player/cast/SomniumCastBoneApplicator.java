@@ -409,7 +409,7 @@ public final class SomniumCastBoneApplicator {
      * Large whole-body transformation animations do need it. See
      * {@link #applyBoneHierarchyCompound}, called right after this method, for the proper
      * (quaternion-composed, not scalar-add) fix — gated behind
-     * {@link CastAnimationOptions#compoundBoneHierarchy()} so it never touches an animation that
+     * {@link CastAnimationOptions#boneHierarchy()} so it never touches an animation that
      * doesn't explicitly reference a hierarchy.</p>
      */
     private static void applyAllBones(BakedGeoModel bakedModel,
@@ -569,8 +569,8 @@ public final class SomniumCastBoneApplicator {
      * formula guess, before it's touched again.
      */
     private static void applyBoneHierarchyCompound(BakedGeoModel bakedModel,
-                                                   PlayerModel<?> playerModel,
-                                                   CastAnimationOptions options) {
+                                                    PlayerModel<?> playerModel,
+                                                    CastAnimationOptions options) {
         if (!options.compoundBoneHierarchy()) return;
 
         // Apply body's own position directly — applyBoneIfPresent (which already ran in
@@ -911,12 +911,18 @@ public final class SomniumCastBoneApplicator {
     private static final float BODY_HEIGHT_PX = 12f;
 
     /** How much body's bottom edge is allowed to extend past a leg's top before the whole
-     *  upper assembly (body + head + arms) gets shifted up. 0 forces body's bottom to land
-     *  exactly at the nearest leg's top — the same relationship body and legs have at rest. */
-    private static final float MAX_BODY_LEG_OVERLAP_PX = 0f;
+     *  upper assembly (body + head + arms) gets shifted up.
+     *
+     *  <p>Calibration history, bracketed from direct feedback rather than guessed once: the
+     *  original, unclamped overlap was 4.74px. An allowance of 3px (a 1.74px shift) was
+     *  "visually passable, but not fixed." An allowance of 0px (the full 4.74px shift, once
+     *  the rigid-shift fix made head/arms move correctly with body) was reported as making
+     *  the whole upper body "too high." The true target sits between those two shift amounts
+     *  — 1.5px allowance (a 3.24px shift) is the midpoint. */
+    private static final float MAX_BODY_LEG_OVERLAP_PX = 1.5f;
 
     private static void clampBodyLegOverlap(ModelPart bodyPartRef, ModelPart rightLegPart, ModelPart leftLegPart,
-                                            ModelPart headPart, ModelPart rightArmPart, ModelPart leftArmPart) {
+                                             ModelPart headPart, ModelPart rightArmPart, ModelPart leftArmPart) {
         if (bodyPartRef == null) return;
 
         Float nearestLegTop = null;
